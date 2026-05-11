@@ -68,7 +68,7 @@ export const MainMenu: React.FC = () => {
         </div>
 
         <div className="mt-4 text-center">
-          <p className="text-[10px] text-slate-600 uppercase tracking-[0.2em]">v0.1.0 Prototype</p>
+          <p className="text-[10px] text-slate-600 uppercase tracking-[0.2em]">v{APP_VERSION} Prototype</p>
         </div>
       </div>
     </div>
