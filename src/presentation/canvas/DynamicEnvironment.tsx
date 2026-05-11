@@ -14,7 +14,7 @@ export const DynamicEnvironment: React.FC = () => {
   const ambientRef = useRef<THREE.AmbientLight>(null);
   const skyRef = useRef<any>(null);
 
-  const { scene, camera } = useThree();
+  const { scene } = useThree();
 
   React.useEffect(() => {
     // Adiciona o alvo da luz à cena para que ele possa ser movido

@@ -1,6 +1,5 @@
 import { calculateDamage, getNPCScaleFactor } from '../../domain/models/NPCDinosaur';
 import type { NPCData } from '../../domain/models/NPCDinosaur';
-import type { DinosaurStats } from '../../domain/models/DinosaurStats';
 import { DINOSAUR_ROSTER } from '../../domain/models/DinosaurStats';
 import { NPCState } from '../../domain/models/NPCState';
 

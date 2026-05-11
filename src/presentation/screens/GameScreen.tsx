@@ -121,7 +121,6 @@ export const GameScreen: React.FC = () => {
   const renderDistance = useAppStore(s => s.renderDistance);
   const playerChunkPos = useAppStore(s => s.playerChunkPos);
   const isDead = useAppStore(s => s.isDead);
-  const resetGameStats = useAppStore(s => s.resetGameStats);
   
   const isOnline = gameMode === 'online';
 

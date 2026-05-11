@@ -92,7 +92,9 @@ export class MapGenerator {
             heightScale: 1,
             trunkWidth: 1,
             rotation: pseudoRandom(x, z) * Math.PI,
-            type: 0
+            type: 0,
+            collisionHeight: 0,
+            collisionRadius: 0
           });
           continue; // Don't spawn trees/rocks on water
         }
@@ -201,7 +203,9 @@ export class MapGenerator {
                 heightScale: 0.2 + pseudoRandom(gz, gx) * 0.8,
                 trunkWidth: 1,
                 rotation: pseudoRandom(gx * 2, gz * 2) * Math.PI * 2,
-                type: 0
+                type: 0,
+                collisionHeight: 0,
+                collisionRadius: 0
               });
             }
           }

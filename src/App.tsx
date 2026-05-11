@@ -1,4 +1,3 @@
-import React from 'react';
 import { useAppStore } from './store/useAppStore';
 import { MainMenu } from './presentation/screens/MainMenu';
 import { SettingsMenu } from './presentation/screens/SettingsMenu';

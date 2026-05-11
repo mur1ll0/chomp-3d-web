@@ -53,7 +53,6 @@ class NPCManagerClass {
 
   // Cache reutilizáveis para evitar alocação por frame
   private edibleCache: { x: number; z: number; id: string; type: string }[] = [];
-  private edibleCacheChunkKey = '';
 
   // Posição do jogador no momento do spawn (para zona de exclusão)
   private playerSpawnX = 0;
@@ -69,7 +68,6 @@ class NPCManagerClass {
     this.npcs.clear();
     this.spawnedChunks.clear();
     this.pendingDamageToPlayer = 0;
-    this.edibleCacheChunkKey = '';
     this.hasPlayerSpawnPos = false;
   }
 
@@ -111,8 +109,6 @@ class NPCManagerClass {
     const startZ = chunkZ * CHUNK_SIZE;
 
     // Posição de spawn do jogador (sempre 0,0 no início do mundo)
-    const playerSpawnX = 0;
-    const playerSpawnZ = 0;
 
     // Nível base pela distância do centro do mapa
     const distFromCenter = Math.sqrt(startX * startX + startZ * startZ);
@@ -376,7 +372,7 @@ class NPCManagerClass {
 
   private updateFSM(
     npc: NPCData,
-    stats: DinosaurStats,
+    _stats: DinosaurStats,
     strategy: IBehaviorStrategy,
     allNPCs: NPCData[],
     ediblePositions: { x: number; z: number; id: string; type: string }[],

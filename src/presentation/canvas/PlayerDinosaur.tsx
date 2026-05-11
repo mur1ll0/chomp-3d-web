@@ -8,7 +8,6 @@ import { useKeyboard } from '../../useCases/game/useKeyboard';
 import { MapGenerator, getWaterValue, WATER_THRESHOLD } from '../../infrastructure/generation/MapGenerator';
 import { NPCManager } from '../../useCases/game/NPCManager';
 import { playerAttackNPC } from '../../useCases/game/CombatSystem';
-import { getNPCScaleFactor } from '../../domain/models/NPCDinosaur';
 import { PlayerPositionRef } from '../../useCases/game/PlayerPositionRef';
 
 /**
@@ -426,7 +425,7 @@ export const PlayerDinosaur: React.FC = () => {
   };
 
   // Movement Logic (8-directional relative to camera)
-  useFrame((state, rawDelta) => {
+  useFrame((_, rawDelta) => {
     if (!playerRef.current) return;
 
     // Evita teleporte de física se houver lag spike (stutter de carregamento de chunk)
@@ -577,7 +576,6 @@ export const PlayerDinosaur: React.FC = () => {
     const currentChunkX = Math.floor(px / CHUNK_SIZE);
     const currentChunkZ = Math.floor(pz / CHUNK_SIZE);
     const appState = useAppStore.getState();
-    const storedPos = appState.playerChunkPos;
 
     if (lastChunkRef.current.x !== currentChunkX || lastChunkRef.current.z !== currentChunkZ) {
       appState.setPlayerChunkPos(currentChunkX, currentChunkZ);
@@ -588,7 +586,6 @@ export const PlayerDinosaur: React.FC = () => {
     const chunks = chunksRef.current;
     // Cap do raio: dinos gigantes (nível 100+) não precisam colidir com tudo a 10m de distância
     const playerRadius = Math.min(2.0 * finalScale, 5.0);
-    let currentlyOverlapping = false;
 
     for (const chunk of chunks) {
       for (const tree of chunk.trees) {
@@ -605,7 +602,6 @@ export const PlayerDinosaur: React.FC = () => {
         if (py >= treeHeight) continue; // Acima da árvore, sem colisão
 
         const dist = Math.sqrt(distSq) || 0.001;
-        currentlyOverlapping = true;
         const overlap = maxDist - dist;
         playerRef.current.position.x += (dx / dist) * overlap * 1.1;
         playerRef.current.position.z += (dz / dist) * overlap * 1.1;
@@ -634,7 +630,6 @@ export const PlayerDinosaur: React.FC = () => {
             isGrounded.current = true;
           }
         } else {
-          currentlyOverlapping = true;
           const overlap = maxDist - dist;
           playerRef.current.position.x += (dx / dist) * overlap * 1.1;
           playerRef.current.position.z += (dz / dist) * overlap * 1.1;
