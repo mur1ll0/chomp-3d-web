@@ -41,6 +41,7 @@ export const PlayerDinosaur: React.FC = () => {
   const debugCollisions = useAppStore(s => s.debugCollisions);
   const level = useAppStore(s => s.level);
   const isDead = useAppStore(s => s.isDead);
+  const controlBindings = useAppStore(s => s.controlBindings);
   const health = useAppStore(s => s.health);
   const initPlayerStats = useAppStore(s => s.initPlayerStats);
   const incrementTimeAlive = useAppStore(s => s.incrementTimeAlive);
@@ -257,16 +258,18 @@ export const PlayerDinosaur: React.FC = () => {
 
   // Mouse Listener para Atacar (Left Click) e Atalhos de Mouse (Alt, Tab, Esc)
   useEffect(() => {
+    const matchesMouseAttack = (button: number): boolean => {
+      if (controlBindings.attack === 'MouseLeft') return button === 0;
+      if (controlBindings.attack === 'MouseMiddle') return button === 1;
+      if (controlBindings.attack === 'MouseRight') return button === 2;
+      return false;
+    };
+
     const handleMouseDown = (e: MouseEvent) => {
       // Ataca apenas se o mouse já estiver capturado (PointerLock ativo)
-      if (document.pointerLockElement && e.button === 0) {
+      if (document.pointerLockElement && matchesMouseAttack(e.button)) {
         if (!isActionLocked.current && isGrounded.current) {
-          // Se tiver comida na mira, come. Senão, ataca.
-          if (useAppStore.getState().interactableEdibleId) {
-            triggerEatAction();
-          } else {
-            triggerAttackAction();
-          }
+          triggerAttackAction();
         }
       }
     };
@@ -276,6 +279,16 @@ export const PlayerDinosaur: React.FC = () => {
         if (document.pointerLockElement) {
           document.exitPointerLock();
         }
+      }
+
+      if (
+        document.pointerLockElement &&
+        e.code === controlBindings.attack &&
+        !e.repeat &&
+        !isActionLocked.current &&
+        isGrounded.current
+      ) {
+        triggerAttackAction();
       }
 
       // Tecla de teste para simular Dano (Temporário para debug)
@@ -290,7 +303,7 @@ export const PlayerDinosaur: React.FC = () => {
       window.removeEventListener('mousedown', handleMouseDown);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [takeDamage, triggerAttackAction, triggerEatAction]);
+  }, [controlBindings.attack, takeDamage, triggerAttackAction]);
 
   // Movement Logic (8-directional relative to camera)
   useFrame((_, rawDelta) => {
@@ -302,6 +315,21 @@ export const PlayerDinosaur: React.FC = () => {
     let groundY = inWater ? -3 * finalScale : 0;
 
     if (isDead) {
+      // Sincroniza estado global mesmo com retorno antecipado.
+      // Sem isso, NPCs podem continuar tratando o player como vivo.
+      PlayerPositionRef.x = playerRef.current.position.x;
+      PlayerPositionRef.y = playerRef.current.position.y;
+      PlayerPositionRef.z = playerRef.current.position.z;
+      PlayerPositionRef.rotY = playerRef.current.rotation.y;
+      PlayerPositionRef.scale = finalScale;
+      PlayerPositionRef.level = level;
+      PlayerPositionRef.diet = dinoStats.diet;
+      PlayerPositionRef.strength = dinoStats.strength;
+      PlayerPositionRef.isDead = true;
+      PlayerPositionRef.collisionRadius = dinoStats.collisionRadius;
+      PlayerPositionRef.collisionHeight = dinoStats.collisionHeight;
+      PlayerPositionRef.interactRadius = dinoStats.interactRadius;
+
       playAnimation('Death', false);
       // Mesmo morto, a gravidade e colisões devem continuar
       if (!isGrounded.current) {
@@ -318,7 +346,7 @@ export const PlayerDinosaur: React.FC = () => {
     }
 
     // Acionar Comer pelo teclado (apenas se houver comida próxima)
-    if (keys['KeyE'] && isGrounded.current && useAppStore.getState().interactableEdibleId) {
+    if (keys[controlBindings.eat] && isGrounded.current && useAppStore.getState().interactableEdibleId) {
       triggerEatAction();
       return;
     }
@@ -334,7 +362,7 @@ export const PlayerDinosaur: React.FC = () => {
     }
 
     // Só pode correr se tiver stamina e não estiver na trava de exaustão
-    const isRunning = (keys['ShiftLeft'] || keys['ShiftRight']) && currentStamina > 0 && !useAppStore.getState().isExhausted;
+    const isRunning = keys[controlBindings.sprint] && currentStamina > 0 && !useAppStore.getState().isExhausted;
 
     // Penalidade de velocidade para filhotes e jovens (atinge 100% no nível 20, adulto)
     // Começa em 0.5 (50%) e sobe 0.5 (até 100%) ao longo de 19 níveis
@@ -362,10 +390,10 @@ export const PlayerDinosaur: React.FC = () => {
 
     // Bloqueia movimento se estiver executando uma ação (Comer/Atacar)
     if (!isActing) {
-      if (keys['KeyW']) { _moveDir.add(_forward); moving = true; }
-      if (keys['KeyS']) { _moveDir.sub(_forward); moving = true; }
-      if (keys['KeyA']) { _moveDir.sub(_right); moving = true; }
-      if (keys['KeyD']) { _moveDir.add(_right); moving = true; }
+      if (keys[controlBindings.moveForward]) { _moveDir.add(_forward); moving = true; }
+      if (keys[controlBindings.moveBackward]) { _moveDir.sub(_forward); moving = true; }
+      if (keys[controlBindings.moveLeft]) { _moveDir.sub(_right); moving = true; }
+      if (keys[controlBindings.moveRight]) { _moveDir.add(_right); moving = true; }
     }
 
     // Lógica de Stamina
@@ -378,7 +406,7 @@ export const PlayerDinosaur: React.FC = () => {
     }
 
     // Física de Pulo e Gravidade
-    if (keys['Space'] && isGrounded.current && !inWater) {
+    if (keys[controlBindings.jump] && isGrounded.current && !inWater) {
       // Ajuste fino: aumentamos o valor base para fortalecer o adulto e reduzimos o fator 
       // de escala para suavizar o pulo do filhote, aproximando mais os dois extremos.
       yVelocity.current = 15.5 + (2.0 / Math.sqrt(finalScale));

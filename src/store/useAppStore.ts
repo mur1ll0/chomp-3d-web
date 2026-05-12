@@ -3,6 +3,64 @@ import { create } from 'zustand';
 export type Screen = 'menu' | 'character-select' | 'settings' | 'game';
 export type GameMode = 'online' | 'offline' | null;
 
+export type ControlAction =
+  | 'moveForward'
+  | 'moveBackward'
+  | 'moveLeft'
+  | 'moveRight'
+  | 'attack'
+  | 'eat'
+  | 'sprint'
+  | 'jump';
+
+export interface ControlBindings {
+  moveForward: string;
+  moveBackward: string;
+  moveLeft: string;
+  moveRight: string;
+  attack: string;
+  eat: string;
+  sprint: string;
+  jump: string;
+}
+
+const CONTROL_BINDINGS_STORAGE_KEY = 'chomp3d.controlBindings';
+
+const DEFAULT_CONTROL_BINDINGS: ControlBindings = {
+  moveForward: 'KeyW',
+  moveBackward: 'KeyS',
+  moveLeft: 'KeyA',
+  moveRight: 'KeyD',
+  attack: 'MouseLeft',
+  eat: 'KeyE',
+  sprint: 'ShiftLeft',
+  jump: 'Space',
+};
+
+function loadControlBindings(): ControlBindings {
+  if (typeof window === 'undefined') return DEFAULT_CONTROL_BINDINGS;
+  try {
+    const raw = window.sessionStorage.getItem(CONTROL_BINDINGS_STORAGE_KEY);
+    if (!raw) return DEFAULT_CONTROL_BINDINGS;
+    const parsed = JSON.parse(raw) as Partial<ControlBindings>;
+    return {
+      ...DEFAULT_CONTROL_BINDINGS,
+      ...parsed,
+    };
+  } catch {
+    return DEFAULT_CONTROL_BINDINGS;
+  }
+}
+
+function persistControlBindings(bindings: ControlBindings): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.setItem(CONTROL_BINDINGS_STORAGE_KEY, JSON.stringify(bindings));
+  } catch {
+    // noop
+  }
+}
+
 interface AppState {
   currentScreen: Screen;
   gameMode: GameMode;
@@ -18,6 +76,7 @@ interface AppState {
   debugCollisions: boolean;
   debugNpcLevels: boolean;
   debugNpcVision: boolean;
+  controlBindings: ControlBindings;
 
   // Game Mechanics
   foodScore: number;
@@ -52,6 +111,7 @@ interface AppState {
   toggleDebugCollisions: () => void;
   toggleDebugNpcLevels: () => void;
   toggleDebugNpcVision: () => void;
+  setControlBinding: (action: ControlAction, keyCode: string) => void;
   setPlayerChunkPos: (x: number, z: number) => void;
   consumeFood: (points: number) => void;
   damageEdible: (id: string, damage: number) => void;
@@ -85,6 +145,7 @@ export const useAppStore = create<AppState>((set) => ({
   debugCollisions: false,
   debugNpcLevels: false,
   debugNpcVision: false,
+  controlBindings: loadControlBindings(),
 
   foodScore: 0,
   edibleStates: {},
@@ -118,6 +179,14 @@ export const useAppStore = create<AppState>((set) => ({
   toggleDebugCollisions: () => set((state) => ({ debugCollisions: !state.debugCollisions })),
   toggleDebugNpcLevels: () => set((state) => ({ debugNpcLevels: !state.debugNpcLevels })),
   toggleDebugNpcVision: () => set((state) => ({ debugNpcVision: !state.debugNpcVision })),
+  setControlBinding: (action, keyCode) => set((state) => {
+    const updated = {
+      ...state.controlBindings,
+      [action]: keyCode,
+    };
+    persistControlBindings(updated);
+    return { controlBindings: updated };
+  }),
   setPlayerChunkPos: (x, z) => set({ playerChunkPos: { x, z } }),
   consumeFood: (points) => set((state) => {
     // Cada comida dá 10 de XP por ponto de nutrição (ex: tamanho)

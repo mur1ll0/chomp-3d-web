@@ -42,6 +42,7 @@ class NPCManagerClass {
   private obstacleCache: WorldObstacle[] = [];
   private lastCacheChunkX = NaN;
   private lastCacheChunkZ = NaN;
+  private lastPlayerDeadState = false;
 
   private playerSpawnX = 0;
   private playerSpawnZ = 0;
@@ -77,6 +78,7 @@ class NPCManagerClass {
     this.simulationTick = 0;
     this.lastCacheChunkX = NaN;
     this.lastCacheChunkZ = NaN;
+    this.lastPlayerDeadState = false;
   }
 
   private getStrategyForNPC(npc: NPCData): IBehaviorStrategy {
@@ -183,12 +185,15 @@ class NPCManagerClass {
       this.npcRandomCache.delete(id);
     }
 
-    // Cache obstáculos e edibles apenas ao mudar de chunk (não toda frame)
-    if (playerChunkX !== this.lastCacheChunkX || playerChunkZ !== this.lastCacheChunkZ) {
+    const playerDeathStateChanged = PlayerPositionRef.isDead !== this.lastPlayerDeadState;
+
+    // Cache de obstáculos/edibles é rebuild ao trocar de chunk ou quando player morre/ressuscita.
+    if (playerChunkX !== this.lastCacheChunkX || playerChunkZ !== this.lastCacheChunkZ || playerDeathStateChanged) {
       this.edibleCache = this.getEdiblePositions(playerX, playerZ, gameState, worldQuery);
       this.obstacleCache = worldQuery.getNearbyObstacles(playerX, playerZ, SPAWN_RADIUS + 1);
       this.lastCacheChunkX = playerChunkX;
       this.lastCacheChunkZ = playerChunkZ;
+      this.lastPlayerDeadState = PlayerPositionRef.isDead;
     }
 
     const allNPCs = this.getActiveNPCs();
@@ -196,6 +201,24 @@ class NPCManagerClass {
 
     for (const npc of allNPCs) {
       updateCombatTimers(npc, dt);
+
+      // Se o player morreu, encerra imediatamente qualquer estado focado no player.
+      // Isso evita ficar preso em one-shot/retaliação com alvo inválido.
+      if (PlayerPositionRef.isDead) {
+        const hadPlayerTarget = npc.huntingTargetId === 'player' || npc.fleeFromId === 'player';
+        if (hadPlayerTarget) {
+          npc.huntingTargetId = null;
+          if (npc.fleeFromId === 'player') npc.fleeFromId = null;
+          npc.retaliatePlayerTimer = 0;
+          npc.retaliatePlayerPackTimer = 0;
+          if (npc.state === NPCState.Hunting || npc.state === NPCState.Fleeing || npc.state === NPCState.Attacking) {
+            npc.state = NPCState.Wandering;
+            npc.animationIntent = 'Idle';
+            npc.stateTimer = 0;
+            npc.wanderTimer = 0;
+          }
+        }
+      }
 
       if (npc.state === NPCState.Dead) {
         const remaining = gameState.getEdibleRemaining(npc.id);

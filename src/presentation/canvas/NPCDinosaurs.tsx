@@ -219,18 +219,18 @@ export const NPCDinosaurs: React.FC = () => {
 
   useFrame((_, delta) => {
     const pp = PlayerPositionRef;
-    if (!pp.isDead) {
-      simulationAccumulator.current = Math.min(simulationAccumulator.current + delta, FIXED_TIMESTEP * MAX_SUBSTEPS);
+    simulationAccumulator.current = Math.min(simulationAccumulator.current + delta, FIXED_TIMESTEP * MAX_SUBSTEPS);
 
-      let substeps = 0;
-      while (simulationAccumulator.current >= FIXED_TIMESTEP && substeps < MAX_SUBSTEPS) {
-        NPCManager.update(FIXED_TIMESTEP, pp.x, pp.z, pp.level, pp.scale, pp.diet, pp.strength);
-        simulationAccumulator.current -= FIXED_TIMESTEP;
-        substeps++;
-      }
+    let substeps = 0;
+    while (simulationAccumulator.current >= FIXED_TIMESTEP && substeps < MAX_SUBSTEPS) {
+      NPCManager.update(FIXED_TIMESTEP, pp.x, pp.z, pp.level, pp.scale, pp.diet, pp.strength);
+      simulationAccumulator.current -= FIXED_TIMESTEP;
+      substeps++;
+    }
 
-      const dmg = NPCManager.consumePlayerDamage();
-      if (dmg > 0) useAppStore.getState().takeDamage(dmg);
+    const dmg = NPCManager.consumePlayerDamage();
+    if (!pp.isDead && dmg > 0) {
+      useAppStore.getState().takeDamage(dmg);
     }
 
     updateCounter.current++;

@@ -58,10 +58,21 @@ export class NPCFsmSystem {
 
     // Com o player morto, limpa alvos/timers de revide para evitar perseguição/ataque inválidos.
     if (playerIsDead) {
+      const hadPlayerTarget = npc.huntingTargetId === 'player' || npc.fleeFromId === 'player';
       if (npc.huntingTargetId === 'player') npc.huntingTargetId = null;
       if (npc.fleeFromId === 'player') npc.fleeFromId = null;
       npc.retaliatePlayerTimer = 0;
       npc.retaliatePlayerPackTimer = 0;
+
+      if (
+        hadPlayerTarget &&
+        (npc.state === NPCState.Hunting || npc.state === NPCState.Fleeing || npc.state === NPCState.Attacking)
+      ) {
+        npc.state = NPCState.Wandering;
+        npc.animationIntent = 'Idle';
+        npc.stateTimer = 0;
+        npc.wanderTimer = 0;
+      }
     }
 
     const perceptionProfile = getNpcPerceptionProfile(npc.diet);
