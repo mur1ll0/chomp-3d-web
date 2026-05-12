@@ -60,7 +60,7 @@ src/
 ## 🛠️ Installation & Setup
 
 ### Prerequisites
-- Node.js 18+
+- Node.js 24.15.0
 - npm or yarn
 
 ### Steps

@@ -5,7 +5,7 @@ import { CharacterSelectionMenu } from './presentation/screens/CharacterSelectio
 import { GameScreen } from './presentation/screens/GameScreen';
 
 function App() {
-  const { currentScreen } = useAppStore();
+  const currentScreen = useAppStore(s => s.currentScreen);
 
   return (
     <>

@@ -1,3 +1,5 @@
+import type { Diet } from '../../domain/models/DinosaurStats';
+
 /**
  * Referência global da posição do jogador — acessível fora do React.
  * 
@@ -15,7 +17,10 @@ export const PlayerPositionRef = {
   rotY: 0,
   scale: 0.15,
   level: 1,
-  diet: 'Carnivore' as string,
+  diet: 'Carnivore' as Diet,
   strength: 5,
   isDead: false,
+  collisionRadius: 2.0, // Default base values
+  collisionHeight: 8.0,
+  interactRadius: 5.0,
 };

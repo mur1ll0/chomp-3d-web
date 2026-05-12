@@ -27,6 +27,10 @@ export interface NPCData {
   attackCooldown: number;
   stateTimer: number; // Tempo no estado atual (para animações de duração fixa)
   fleeFromId: string | null; // ID de quem está fugindo
+  huntingTargetId: string | null; // ID do alvo de caça
+  defendingCarnivoreId: string | null; // ID do carnívoro que está atacando o bando (herbívoros apenas)
+  retaliatePlayerTimer: number; // Janela de revidar quando for atacado pelo player
+  retaliatePlayerPackTimer: number; // Janela de defesa de bando contra agressão do player
 
   // Visual state (para renderização)
   animationIntent: string; // 'Idle' | 'Walk' | 'Run' | 'Attack' | 'Eat' | 'Death'
@@ -37,20 +41,13 @@ export interface NPCData {
   spawnChunkId: string;
 }
 
+import { calculateFinalScale } from '../services/DinosaurService';
+
 /**
  * Calcula o fator de escala do NPC baseado no nível (mesma curva do jogador).
  */
 export function getNPCScaleFactor(level: number, stats: DinosaurStats): number {
-  const GLOBAL_SCALE_MODIFIER = 0.15;
-  let currentScale = 1.0;
-  if (level <= 20) {
-    const progress = (level - 1) / 19;
-    currentScale = stats.minScale + (stats.maxScale - stats.minScale) * progress;
-  } else {
-    const bonusProgress = Math.log10(1 + (level - 20) / 30);
-    currentScale = stats.maxScale * (1 + bonusProgress);
-  }
-  return currentScale * GLOBAL_SCALE_MODIFIER;
+  return calculateFinalScale(level, stats);
 }
 
 /**
@@ -85,7 +82,7 @@ export function createNPC(
 ): NPCData {
   const levelFactor = level <= 20 ? (0.05 + ((level - 1) / 19) * 0.95) : (1.0 + Math.log10(1 + (level - 20) / 30));
   const maxHealth = Math.floor((stats.vitality * 10) * levelFactor);
-  
+
   return {
     id,
     speciesId: stats.id,
@@ -106,6 +103,10 @@ export function createNPC(
     attackCooldown: 0,
     stateTimer: 0,
     fleeFromId: null,
+    huntingTargetId: null,
+    defendingCarnivoreId: null,
+    retaliatePlayerTimer: 0,
+    retaliatePlayerPackTimer: 0,
 
     animationIntent: 'Idle',
     isHit: false,

@@ -92,6 +92,9 @@ export const ProceduralMap: React.FC<ProceduralMapProps> = ({ chunks }) => {
       trunkMeshRef.current.instanceMatrix.needsUpdate = true;
       leavesMeshRef.current.instanceMatrix.needsUpdate = true;
       leavesSphereMeshRef.current.instanceMatrix.needsUpdate = true;
+      trunkMeshRef.current.computeBoundingSphere();
+      leavesMeshRef.current.computeBoundingSphere();
+      leavesSphereMeshRef.current.computeBoundingSphere();
       if (debugCollisions && treeDebugMeshRef.current) treeDebugMeshRef.current.instanceMatrix.needsUpdate = true;
     }
 
@@ -117,6 +120,7 @@ export const ProceduralMap: React.FC<ProceduralMapProps> = ({ chunks }) => {
       });
       
       rockMeshRef.current.instanceMatrix.needsUpdate = true;
+      rockMeshRef.current.computeBoundingSphere();
       if (debugCollisions && rockDebugMeshRef.current) rockDebugMeshRef.current.instanceMatrix.needsUpdate = true;
     }
 
@@ -133,6 +137,7 @@ export const ProceduralMap: React.FC<ProceduralMapProps> = ({ chunks }) => {
       });
       
       grassMeshRef.current.instanceMatrix.needsUpdate = true;
+      grassMeshRef.current.computeBoundingSphere();
     }
 
     if (waterMeshRef.current) {
@@ -148,6 +153,7 @@ export const ProceduralMap: React.FC<ProceduralMapProps> = ({ chunks }) => {
       });
       
       waterMeshRef.current.instanceMatrix.needsUpdate = true;
+      waterMeshRef.current.computeBoundingSphere();
     }
 
   }, [allTrees, allRocks, allGrass, allWater, debugCollisions]);
@@ -158,9 +164,9 @@ export const ProceduralMap: React.FC<ProceduralMapProps> = ({ chunks }) => {
     const cycleDuration = 300000; 
     const progress = (timeMs % cycleDuration) / cycleDuration;
     
-    let theta = 0;
-    if (progress < 0.8) theta = (progress / 0.8) * Math.PI;
-    else theta = Math.PI + ((progress - 0.8) / 0.2) * Math.PI;
+    const theta = progress < 0.8
+      ? (progress / 0.8) * Math.PI
+      : Math.PI + ((progress - 0.8) / 0.2) * Math.PI;
 
     const sunHeight = Math.sin(theta);
     
@@ -195,7 +201,7 @@ export const ProceduralMap: React.FC<ProceduralMapProps> = ({ chunks }) => {
     <group>
       {/* WATER */}
       {allWater.length > 0 && (
-        <instancedMesh ref={waterMeshRef} args={[undefined, undefined, allWater.length]} receiveShadow frustumCulled={false}>
+        <instancedMesh ref={waterMeshRef} args={[undefined, undefined, allWater.length]} receiveShadow frustumCulled>
           <boxGeometry args={[2, 0.1, 2]} />
           <meshStandardMaterial color="#2563eb" roughness={0.1} metalness={0.5} transparent opacity={0.8} />
         </instancedMesh>
@@ -203,7 +209,7 @@ export const ProceduralMap: React.FC<ProceduralMapProps> = ({ chunks }) => {
 
       {/* GRASS */}
       {allGrass.length > 0 && (
-        <instancedMesh ref={grassMeshRef} args={[undefined, undefined, allGrass.length]} receiveShadow frustumCulled={false}>
+        <instancedMesh ref={grassMeshRef} args={[undefined, undefined, allGrass.length]} receiveShadow frustumCulled>
           <boxGeometry args={[0.2, 1, 0.2]} />
           <meshStandardMaterial ref={grassMatRef} color="#65a30d" roughness={0.9} />
         </instancedMesh>
@@ -211,7 +217,7 @@ export const ProceduralMap: React.FC<ProceduralMapProps> = ({ chunks }) => {
 
       {/* TREES (Trunks) */}
       {allTrees.length > 0 && (
-        <instancedMesh ref={trunkMeshRef} args={[undefined, undefined, allTrees.length]} receiveShadow frustumCulled={false}>
+        <instancedMesh ref={trunkMeshRef} args={[undefined, undefined, allTrees.length]} receiveShadow frustumCulled>
           <cylinderGeometry args={[0.2, 0.4, 2, 8]} />
           <meshStandardMaterial ref={trunkMatRef} color="#5c4033" roughness={0.9} />
         </instancedMesh>
@@ -219,7 +225,7 @@ export const ProceduralMap: React.FC<ProceduralMapProps> = ({ chunks }) => {
 
       {/* TREES (Leaves - Cones) */}
       {allTrees.length > 0 && (
-        <instancedMesh ref={leavesMeshRef} args={[undefined, undefined, allTrees.length]} castShadow receiveShadow frustumCulled={false}>
+        <instancedMesh ref={leavesMeshRef} args={[undefined, undefined, allTrees.length]} castShadow receiveShadow frustumCulled>
           <coneGeometry args={[1, 2, 5]} />
           <meshStandardMaterial ref={leavesMatRef} color="#166534" roughness={0.8} />
         </instancedMesh>
@@ -227,7 +233,7 @@ export const ProceduralMap: React.FC<ProceduralMapProps> = ({ chunks }) => {
 
       {/* TREES (Leaves - Spheres) */}
       {allTrees.length > 0 && (
-        <instancedMesh ref={leavesSphereMeshRef} args={[undefined, undefined, allTrees.length]} receiveShadow frustumCulled={false}>
+        <instancedMesh ref={leavesSphereMeshRef} args={[undefined, undefined, allTrees.length]} receiveShadow frustumCulled>
           <sphereGeometry args={[1, 6, 6]} />
           <meshStandardMaterial ref={leavesMatRef} color="#14532d" roughness={0.8} />
         </instancedMesh>
@@ -235,7 +241,7 @@ export const ProceduralMap: React.FC<ProceduralMapProps> = ({ chunks }) => {
 
       {/* ROCKS */}
       {allRocks.length > 0 && (
-        <instancedMesh ref={rockMeshRef} args={[undefined, undefined, allRocks.length]} castShadow receiveShadow frustumCulled={false}>
+        <instancedMesh ref={rockMeshRef} args={[undefined, undefined, allRocks.length]} castShadow receiveShadow frustumCulled>
           <icosahedronGeometry args={[1, 0]} /> {/* 0 detail = low poly rock */}
           <meshStandardMaterial ref={rockMatRef} color="#737373" roughness={0.8} />
         </instancedMesh>

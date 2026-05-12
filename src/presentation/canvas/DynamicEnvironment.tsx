@@ -2,28 +2,38 @@ import React, { useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { Sky } from '@react-three/drei';
 import * as THREE from 'three';
+import type { Sky as SkyImpl } from 'three-stdlib';
 import { useAppStore } from '../../store/useAppStore';
 
 // Reutiliza objetos para evitar alocações por frame
 const _sunPos = new THREE.Vector3();
 const _playerPos = new THREE.Vector3();
+const INITIAL_SUN_POSITION: [number, number, number] = [100, 20, 100];
+
+type SkyLikeMaterial = THREE.Material & {
+  uniforms?: {
+    sunPosition?: { value: THREE.Vector3 };
+    rayleigh?: { value: number };
+  };
+};
 
 export const DynamicEnvironment: React.FC = () => {
   const lightRef = useRef<THREE.DirectionalLight>(null);
   const targetRef = useRef<THREE.Object3D>(new THREE.Object3D());
   const ambientRef = useRef<THREE.AmbientLight>(null);
-  const skyRef = useRef<any>(null);
+  const skyRef = useRef<SkyImpl>(null);
 
   const { scene } = useThree();
 
   React.useEffect(() => {
     // Adiciona o alvo da luz à cena para que ele possa ser movido
-    scene.add(targetRef.current);
+    const target = targetRef.current;
+    scene.add(target);
     if (lightRef.current) {
-      lightRef.current.target = targetRef.current;
+      lightRef.current.target = target;
     }
     return () => {
-      scene.remove(targetRef.current);
+      scene.remove(target);
     };
   }, [scene]);
 
@@ -39,14 +49,11 @@ export const DynamicEnvironment: React.FC = () => {
     // Queremos que o Dia dure 4 minutos e a Noite passe mais rápido (1 minuto)
     // 0.0 até 0.8 (Dia) -> 0 a PI (0 a 180 graus)
     // 0.8 até 1.0 (Noite) -> PI a 2*PI (180 a 360 graus)
-    let theta = 0;
-    if (progress < 0.8) {
+    const theta = progress < 0.8
       // Mapeia 0.0-0.8 para 0-PI
-      theta = (progress / 0.8) * Math.PI;
-    } else {
+      ? (progress / 0.8) * Math.PI
       // Mapeia 0.8-1.0 para PI-2PI
-      theta = Math.PI + ((progress - 0.8) / 0.2) * Math.PI;
-    }
+      : Math.PI + ((progress - 0.8) / 0.2) * Math.PI;
 
     // Calcula a direção do sol (nasce no Leste/X+, se põe no Oeste/X-)
     // Adicionamos uma inclinação no eixo Z para o sol não passar perfeitamente em cima
@@ -90,17 +97,23 @@ export const DynamicEnvironment: React.FC = () => {
     if (skyRef.current) {
       // O componente Sky do drei não atualiza via props depois de montado,
       // precisamos atualizar o shader interno dele manualmente todo frame.
-      skyRef.current.material.uniforms.sunPosition.value.copy(sunPosition).normalize();
+      const material = skyRef.current.material as SkyLikeMaterial | undefined;
+      const sunUniform = material?.uniforms?.sunPosition;
+      const rayleighUniform = material?.uniforms?.rayleigh;
+
+      if (!sunUniform || !rayleighUniform) return;
+
+      sunUniform.value.copy(sunPosition).normalize();
 
       // Quando o sol se põe, reduzimos o Rayleigh para escurecer o céu em vez de deixá-mo branco
       const heightFactor = Math.max(0, Math.sin(theta));
-      skyRef.current.material.uniforms.rayleigh.value = 0.1 + (heightFactor * 2.0);
+      rayleighUniform.value = 0.1 + (heightFactor * 2.0);
     }
   });
 
   return (
     <>
-      <Sky ref={skyRef} turbidity={0.5} rayleigh={1} distance={450000} sunPosition={lightRef.current?.position || [100, 20, 100]} />
+      <Sky ref={skyRef} turbidity={0.5} rayleigh={1} distance={450000} sunPosition={INITIAL_SUN_POSITION} />
       <ambientLight ref={ambientRef} intensity={0.4} />
       <directionalLight
         ref={lightRef}

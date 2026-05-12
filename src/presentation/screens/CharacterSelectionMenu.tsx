@@ -85,12 +85,6 @@ const DinosaurConfiguratorUI = ({ modelPath }: { modelPath: string }) => {
   const { dinoColors, setDinoColor } = useAppStore();
   const [activeMaterial, setActiveMaterial] = useState<string | null>(null);
   const [materials, setMaterials] = useState<string[]>([]);
-  
-  // Limpar os materiais e interface quando trocar de modelo (força estado de Loading)
-  React.useEffect(() => {
-    setMaterials([]);
-    setActiveMaterial(null);
-  }, [modelPath]);
 
   const handleMaterialsLoaded = React.useCallback((mats: string[]) => {
     setMaterials(mats);
@@ -262,7 +256,7 @@ export const CharacterSelectionMenu: React.FC = () => {
               <span className="font-medium animate-pulse">Carregando Modelo 3D...</span>
             </div>
           }>
-            <DinosaurConfiguratorUI modelPath={selectedDino.modelPath} />
+            <DinosaurConfiguratorUI key={selectedDino.modelPath} modelPath={selectedDino.modelPath} />
           </Suspense>
         </div>
 

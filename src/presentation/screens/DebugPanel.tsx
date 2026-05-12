@@ -1,6 +1,16 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 
+type DinoDebugInfo = {
+  speed: number;
+  gameScale: number;
+  worldScale: number;
+};
+
+type WindowWithDinoDebug = Window & {
+  dinoDebug?: DinoDebugInfo;
+};
+
 export const DebugPanel: React.FC = () => {
   const { 
     level, setLevel, 
@@ -14,10 +24,11 @@ export const DebugPanel: React.FC = () => {
   const [currentSize, setCurrentSize] = useState({ game: 0, world: 0 });
   
   const frameCount = useRef(0);
-  const lastTime = useRef(performance.now());
+  const lastTime = useRef(0);
 
   useEffect(() => {
     let animationId: number;
+    lastTime.current = performance.now();
     
     const updateStats = () => {
       const now = performance.now();
@@ -33,11 +44,12 @@ export const DebugPanel: React.FC = () => {
         lastTime.current = now;
 
         // Tenta pegar dados do objeto global injetado pelo PlayerDinosaur
-        if ((window as any).dinoDebug) {
-          setCurrentSpeed((window as any).dinoDebug.speed || 0);
+        const debugInfo = (window as WindowWithDinoDebug).dinoDebug;
+        if (debugInfo) {
+          setCurrentSpeed(debugInfo.speed || 0);
           setCurrentSize({
-            game: (window as any).dinoDebug.gameScale || 0,
-            world: (window as any).dinoDebug.worldScale || 0
+            game: debugInfo.gameScale || 0,
+            world: debugInfo.worldScale || 0
           });
         }
       }

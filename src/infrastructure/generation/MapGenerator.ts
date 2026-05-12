@@ -1,7 +1,9 @@
 import { createNoise2D } from 'simplex-noise';
 
+export const WORLD_SEED = 12345;
+
 // Seeded noise generators
-const noise2D = createNoise2D(() => 12345);
+const noise2D = createNoise2D(() => WORLD_SEED);
 const waterNoise2D = createNoise2D(() => 98765);
 const grassNoise2D = createNoise2D(() => 55555);
 
@@ -35,6 +37,14 @@ export interface ChunkData {
   edibles: MapEdible[];
 }
 
+export interface ChunkCacheMetrics {
+  size: number;
+  maxSize: number;
+  hits: number;
+  misses: number;
+  evictions: number;
+}
+
 const CHUNK_SIZE = 50;
 const TREE_THRESHOLD = 0.3;
 const ROCK_THRESHOLD = 0.5;
@@ -59,12 +69,89 @@ export function getWaterValue(x: number, z: number) {
 
 export class MapGenerator {
   static chunkCache = new Map<string, ChunkData>();
+  static chunkAccessMeta = new Map<string, { x: number; z: number; lastAccessTick: number }>();
+  static maxChunkCacheSize = 256;
+  static cacheHits = 0;
+  static cacheMisses = 0;
+  static cacheEvictions = 0;
+  static accessTick = 0;
+
+  private static touchChunk(id: string, x: number, z: number): void {
+    this.accessTick++;
+    this.chunkAccessMeta.set(id, { x, z, lastAccessTick: this.accessTick });
+  }
+
+  static setMaxChunkCacheSize(maxSize: number): void {
+    this.maxChunkCacheSize = Math.max(64, Math.floor(maxSize));
+  }
+
+  static getChunkCacheMetrics(): ChunkCacheMetrics {
+    return {
+      size: this.chunkCache.size,
+      maxSize: this.maxChunkCacheSize,
+      hits: this.cacheHits,
+      misses: this.cacheMisses,
+      evictions: this.cacheEvictions,
+    };
+  }
+
+  private static evictChunkCache(currentChunkX: number, currentChunkZ: number, visibleRadius: number): void {
+    if (this.chunkCache.size <= this.maxChunkCacheSize) return;
+
+    const keepRadius = visibleRadius + 2;
+    const protectedKeys = new Set<string>();
+
+    for (let x = -keepRadius; x <= keepRadius; x++) {
+      for (let z = -keepRadius; z <= keepRadius; z++) {
+        protectedKeys.add(`${currentChunkX + x},${currentChunkZ + z}`);
+      }
+    }
+
+    const candidates = Array.from(this.chunkAccessMeta.entries())
+      .filter(([id]) => !protectedKeys.has(id))
+      .map(([id, meta]) => ({
+        id,
+        distSq: (meta.x - currentChunkX) * (meta.x - currentChunkX) + (meta.z - currentChunkZ) * (meta.z - currentChunkZ),
+        lastAccessTick: meta.lastAccessTick,
+      }))
+      .sort((a, b) => {
+        if (b.distSq !== a.distSq) return b.distSq - a.distSq;
+        return a.lastAccessTick - b.lastAccessTick;
+      });
+
+    let idx = 0;
+    while (this.chunkCache.size > this.maxChunkCacheSize && idx < candidates.length) {
+      const id = candidates[idx].id;
+      if (this.chunkCache.delete(id)) {
+        this.chunkAccessMeta.delete(id);
+        this.cacheEvictions++;
+      }
+      idx++;
+    }
+
+    if (this.chunkCache.size <= this.maxChunkCacheSize) return;
+
+    const oldest = Array.from(this.chunkAccessMeta.entries())
+      .filter(([id]) => !protectedKeys.has(id))
+      .sort((a, b) => a[1].lastAccessTick - b[1].lastAccessTick);
+
+    for (const [id] of oldest) {
+      if (this.chunkCache.size <= this.maxChunkCacheSize) break;
+      if (this.chunkCache.delete(id)) {
+        this.chunkAccessMeta.delete(id);
+        this.cacheEvictions++;
+      }
+    }
+  }
 
   static getChunk(chunkX: number, chunkZ: number): ChunkData {
     const id = `${chunkX},${chunkZ}`;
     if (this.chunkCache.has(id)) {
+      this.cacheHits++;
+      this.touchChunk(id, chunkX, chunkZ);
       return this.chunkCache.get(id)!;
     }
+    this.cacheMisses++;
 
     const trees: MapObject[] = [];
     const rocks: MapObject[] = [];
@@ -232,7 +319,7 @@ export class MapGenerator {
         if (!blocked) {
           const prng = Math.abs(pseudoRandom(finalX, finalZ));
           // Plants
-          if (biomeVal > 0.1 && pseudoRandom(finalX * 7, finalZ * 7) > 0.95) {
+          if (biomeVal > 0.1 && pseudoRandom(finalX * 7, finalZ * 7) > 0.88) {
             edibles.push({
               id: `p_${Math.round(finalX)}_${Math.round(finalZ)}`,
               type: 'Plant',
@@ -258,6 +345,7 @@ export class MapGenerator {
 
     const chunkData = { id: `${chunkX},${chunkZ}`, x: chunkX, z: chunkZ, trees, rocks, grass, water, edibles };
     this.chunkCache.set(id, chunkData);
+    this.touchChunk(id, chunkX, chunkZ);
     return chunkData;
   }
 
@@ -271,6 +359,8 @@ export class MapGenerator {
         chunks.push(this.getChunk(currentChunkX + x, currentChunkZ + z));
       }
     }
+
+    this.evictChunkCache(currentChunkX, currentChunkZ, radius);
     return chunks;
   }
 }

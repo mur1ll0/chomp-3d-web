@@ -1,14 +1,20 @@
-import React, { useRef, useEffect, useState, useMemo } from 'react';
+/* eslint-disable react-hooks/immutability */
+import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
-import { useGLTF, useAnimations, PointerLockControls } from '@react-three/drei';
+import { useGLTF, PointerLockControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { useAppStore } from '../../store/useAppStore';
+import { NPCState } from '../../domain/models/NPCState';
 import { DINOSAUR_ROSTER } from '../../domain/models/DinosaurStats';
+import { getNPCScaleFactor } from '../../domain/models/NPCDinosaur';
 import { useKeyboard } from '../../useCases/game/useKeyboard';
 import { MapGenerator, getWaterValue, WATER_THRESHOLD } from '../../infrastructure/generation/MapGenerator';
+import type { ChunkData, MapEdible } from '../../infrastructure/generation/MapGenerator';
 import { NPCManager } from '../../useCases/game/NPCManager';
 import { playerAttackNPC } from '../../useCases/game/CombatSystem';
 import { PlayerPositionRef } from '../../useCases/game/PlayerPositionRef';
+import { calculateFinalScale, calculateInteractRadius, calculateBiteDamage, calculatePercentageDamage, calculateCarcassNutritionByLevel } from '../../domain/services/DinosaurService';
+import { useDinosaurAnimations } from '../hooks/useDinosaurAnimations';
 
 /**
  * Helper para clonar SkinnedMeshes corretamente (incluindo esqueleto).
@@ -44,6 +50,16 @@ const _moveDir = new THREE.Vector3();
 const _targetPos = new THREE.Vector3();
 const _forwardCam = new THREE.Vector3();
 const _tempQuatMove = new THREE.Quaternion();
+
+type DinoDebugInfo = {
+  speed: number;
+  gameScale: number;
+  worldScale: number;
+};
+
+type WindowWithDinoDebug = Window & {
+  dinoDebug?: DinoDebugInfo;
+};
 
 export const PlayerDinosaur: React.FC = () => {
   const selectedDinoId = useAppStore(s => s.selectedDinoId);
@@ -120,52 +136,6 @@ export const PlayerDinosaur: React.FC = () => {
     });
   }, [gltf.scene, dinoColors, isDead, isFlashing]);
 
-  // Fix Blender GLB export adding empty OR baked frozen frames at the end of animations
-  const fixedAnimations = React.useMemo(() => {
-    if (!gltf.animations) return [];
-    return gltf.animations.map(clip => {
-      const newClip = clip.clone();
-      let maxActiveTime = 0;
-
-      // Procura em todos os ossos qual foi o último segundo de "movimento real"
-      newClip.tracks.forEach(track => {
-        const times = track.times;
-        const values = track.values;
-        const itemSize = track.getValueSize();
-
-        let lastActiveIndex = 0;
-
-        // Varre de trás para frente comparando se o frame atual é diferente do anterior
-        for (let i = times.length - 1; i > 0; i--) {
-          let changed = false;
-          for (let j = 0; j < itemSize; j++) {
-            // Epsilon de tolerância para ignorar micro-vibrações do bake
-            if (Math.abs(values[i * itemSize + j] - values[(i - 1) * itemSize + j]) > 0.0001) {
-              changed = true;
-              break;
-            }
-          }
-          if (changed) {
-            lastActiveIndex = i;
-            break;
-          }
-        }
-
-        if (times.length > 0) {
-          maxActiveTime = Math.max(maxActiveTime, times[lastActiveIndex]);
-        }
-      });
-
-      // Se detectarmos que a animação para de se mover mais de 0.1s antes da duração oficial
-      // Significa que o Blender exportou a timeline inteira (ex: 250 frames) por acidente.
-      // Cortamos a duração para o exato milissegundo do último movimento real!
-      if (maxActiveTime > 0 && maxActiveTime < newClip.duration - 0.1) {
-        newClip.duration = maxActiveTime;
-      }
-      return newClip;
-    });
-  }, [gltf.animations]);
-
   // Isolamento do modelo (clone) com correção de esqueleto
   const playerModel = useMemo(() => {
     const clone = cloneSkinnedMesh(gltf.scene);
@@ -178,83 +148,23 @@ export const PlayerDinosaur: React.FC = () => {
     return clone;
   }, [gltf.scene]);
 
-  const { actions, names } = useAnimations(fixedAnimations, playerModel);
+  const { names, playAnimation } = useDinosaurAnimations(gltf, playerModel);
   const keys = useKeyboard();
   const { camera } = useThree();
   const playerRef = useRef<THREE.Group>(null);
-
-  // Use refs to avoid re-triggering animations endlessly
-  const currentActionRef = useRef<string>('Idle');
-  const activeAnimationRef = useRef<THREE.AnimationAction | null>(null);
-
-  const getActionByName = (intents: string | string[]) => {
-    if (!names || names.length === 0) return null;
-    const intentList = Array.isArray(intents) ? intents : [intents];
-
-    // Tenta encontrar uma das intenções na ordem
-    for (const intent of intentList) {
-      // Correspondência exata
-      if (actions[intent]) return actions[intent];
-
-      // Correspondência por palavra isolada (Ex: 'Eat' não deve dar match em 'Death')
-      const regex = new RegExp(`\\b${intent}\\b`, 'i');
-      const exactWordMatch = names.find(n => regex.test(n));
-      if (exactWordMatch && actions[exactWordMatch]) return actions[exactWordMatch];
-
-      // Correspondência parcial segura
-      const safeMatch = names.find(n => {
-        const lower = n.toLowerCase();
-        const search = intent.toLowerCase();
-        // Se estivermos buscando 'eat', ignore 'death' ou 'sweat'
-        if (search === 'eat' && lower.includes('death')) return false;
-        return lower.includes(search);
-      });
-      if (safeMatch && actions[safeMatch]) return actions[safeMatch];
-    }
-
-    // Fallback
-    return actions[names[0]];
-  };
-
-  const playAnimation = (intent: string | string[], loop: boolean = true) => {
-    const intentName = Array.isArray(intent) ? intent[0] : intent;
-    if (currentActionRef.current === intentName && activeAnimationRef.current) return activeAnimationRef.current;
-
-    const newAction = getActionByName(intent);
-    if (!newAction) return null;
-
-    if (activeAnimationRef.current) {
-      activeAnimationRef.current.fadeOut(0.2);
-    }
-
-    // Força o loop contínuo ou único
-    if (loop) {
-      newAction.setLoop(THREE.LoopRepeat, Infinity);
-      newAction.clampWhenFinished = false;
-    } else {
-      newAction.setLoop(THREE.LoopOnce, 1);
-      newAction.clampWhenFinished = true;
-    }
-
-    // O .reset() faz o tempo da animação voltar pro 0 (Evita lacunas/gaps)
-    newAction.reset().fadeIn(0.2).play();
-    activeAnimationRef.current = newAction;
-    currentActionRef.current = intentName;
-    return newAction;
-  };
 
   useEffect(() => {
     if (names && names.length > 0) {
       playAnimation('Idle');
     }
-  }, [names]);
+  }, [names, playAnimation]);
 
   // Variáveis físicas e de estado
   const yVelocity = useRef(0);
   const movementRamp = useRef(0);
   const isGrounded = useRef(true);
   const isActionLocked = useRef(false);
-  const chunksRef = useRef<any[]>([]); // Cache de chunks próximos
+  const chunksRef = useRef<ChunkData[]>([]); // Cache de chunks próximos
   const lastChunkRef = useRef({ x: Infinity, z: Infinity });
 
   // Debug Zoom logic
@@ -275,20 +185,101 @@ export const PlayerDinosaur: React.FC = () => {
   // Calcula escala global base e escala final com base no Level
   const GLOBAL_SCALE_MODIFIER = 0.15;
   const finalScale = React.useMemo(() => {
-    let currentScale = 1.0;
-    if (level <= 20) {
-      // De Filhote (Nível 1) a Adulto (Nível 20): cresce de minScale até maxScale
-      const progress = (level - 1) / 19; // 0 a 1
-      currentScale = dinoStats.minScale + (dinoStats.maxScale - dinoStats.minScale) * progress;
-    } else {
-      // Acima do nível 20 (Adulto): Crescimento logarítmico (diminishing returns)
-      // O dino continua crescendo, mas cada nível após o 20 adiciona muito menos tamanho.
-      // No nível 50 ele será apenas ~25% maior que no 20, e no 100 apenas ~40% maior.
-      const bonusProgress = Math.log10(1 + (level - 20) / 30); // 0 no nível 20, ~0.3 no nível 50
-      currentScale = dinoStats.maxScale * (1 + bonusProgress);
-    }
-    return currentScale * GLOBAL_SCALE_MODIFIER;
+    return calculateFinalScale(level, dinoStats);
   }, [level, dinoStats]);
+
+  // Raio de interação (para comer) - usado no frame e no debug
+  const interactRadius = useMemo(() => 
+    calculateInteractRadius(dinoStats.interactRadius, finalScale), 
+  [dinoStats.interactRadius, finalScale]);
+
+  const triggerEatAction = useCallback(() => {
+    if (isActionLocked.current) return;
+
+    const interactableId = useAppStore.getState().interactableEdibleId;
+    if (!interactableId) return;
+
+    // Verifica se a comida ainda existe (tamanho > 0)
+    const edibleStates = useAppStore.getState().edibleStates;
+    const remainingScale = edibleStates[interactableId] ?? 1.0;
+    if (remainingScale <= 0) return;
+
+    // Procurar a comida no mapa OU se é um NPC morto (carcaça)
+    let initialSize: number;
+    const isNPC = interactableId.startsWith('npc_');
+
+    if (isNPC) {
+      const npcData = NPCManager.getNPC(interactableId);
+      if (!npcData || npcData.state !== NPCState.Dead) return;
+      initialSize = calculateCarcassNutritionByLevel(npcData.level);
+    } else {
+      const chunks = MapGenerator.getChunksAround(playerRef.current?.position.x || 0, playerRef.current?.position.z || 0, 1);
+      let targetEdible: MapEdible | undefined;
+      for (const chunk of chunks) {
+        targetEdible = chunk.edibles?.find(e => e.id === interactableId);
+        if (targetEdible) break;
+      }
+      if (!targetEdible) return;
+      initialSize = targetEdible.scale;
+    }
+
+    isActionLocked.current = true;
+    setIsActing(true);
+    const action = playAnimation('Eat', false);
+    const durationMs = action && action.getClip() ? action.getClip().duration * 1000 : 1500;
+
+    const currentPercentage = useAppStore.getState().edibleStates[interactableId] ?? 1.0; // 1.0 = 100%
+    const currentAbsoluteSize = initialSize * currentPercentage; // O tamanho físico restante
+
+    const biteDamage = calculateBiteDamage(dinoStats.strength, level);
+    const percentageDamage = calculatePercentageDamage(biteDamage, initialSize, currentAbsoluteSize);
+
+    useAppStore.getState().damageEdible(interactableId, percentageDamage);
+    useAppStore.getState().consumeFood(percentageDamage * initialSize * 12);
+
+    setTimeout(() => {
+      isActionLocked.current = false;
+      setIsActing(false);
+      playAnimation('Idle');
+    }, durationMs);
+  }, [dinoStats.strength, level, playAnimation]);
+
+  const triggerAttackAction = useCallback(() => {
+    if (isActionLocked.current) return;
+    isActionLocked.current = true;
+    setIsActing(true);
+    const action = playAnimation('Attack', false);
+    const durationMs = action && action.getClip() ? action.getClip().duration * 1000 : 1000;
+
+    // Lógica de dano a NPCs: verifica colisão com todos os NPCs próximos
+    if (playerRef.current) {
+      const px = playerRef.current.position.x;
+      const pz = playerRef.current.position.z;
+      const activeNPCs = NPCManager.getActiveNPCs();
+
+      for (const npc of activeNPCs) {
+        const event = playerAttackNPC(
+          px, pz, finalScale,
+          dinoStats.strength, level, npc
+        );
+        if (event) {
+          // XP por causar dano
+          useAppStore.getState().gainXp(Math.floor(event.damage * 5));
+          if (event.targetDied) {
+            // Bônus de XP por matar
+            useAppStore.getState().gainXp(50 * npc.level);
+          }
+          break; // Ataca apenas 1 NPC por vez
+        }
+      }
+    }
+
+    setTimeout(() => {
+      isActionLocked.current = false;
+      setIsActing(false);
+      playAnimation('Idle');
+    }, durationMs);
+  }, [dinoStats.strength, finalScale, level, playAnimation]);
 
   // Mouse Listener para Atacar (Left Click) e Atalhos de Mouse (Alt, Tab, Esc)
   useEffect(() => {
@@ -325,104 +316,7 @@ export const PlayerDinosaur: React.FC = () => {
       window.removeEventListener('mousedown', handleMouseDown);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [names, finalScale]);
-
-  const triggerEatAction = () => {
-    if (isActionLocked.current) return;
-
-    const interactableId = useAppStore.getState().interactableEdibleId;
-    if (!interactableId) return;
-
-    // Verifica se a comida ainda existe (tamanho > 0)
-    const edibleStates = useAppStore.getState().edibleStates;
-    const remainingScale = edibleStates[interactableId] ?? 1.0;
-    if (remainingScale <= 0) return;
-
-    // Procurar a comida no mapa para saber o tamanho original dela (scale)
-    const chunks = MapGenerator.getChunksAround(playerRef.current?.position.x || 0, playerRef.current?.position.z || 0, 1);
-    let targetEdible: any = null;
-    for (const chunk of chunks) {
-      targetEdible = chunk.edibles?.find(e => e.id === interactableId);
-      if (targetEdible) break;
-    }
-
-    if (!targetEdible) return;
-
-    isActionLocked.current = true;
-    setIsActing(true);
-    const action = playAnimation('Eat', false);
-    const durationMs = action && action.getClip() ? action.getClip().duration * 1000 : 1500;
-
-    const initialSize = targetEdible.scale; // Tamanho absoluto físico original (ex: 0.2 ou 2.0)
-    const currentPercentage = useAppStore.getState().edibleStates[interactableId] ?? 1.0; // 1.0 = 100%
-    const currentAbsoluteSize = initialSize * currentPercentage; // O tamanho físico restante
-
-    // Tamanho da mordida: Proporcional à FORÇA e ao LEVEL
-    // Um Trex (Força 10) no nível 20 terá um fator de ~1.0 (devora carnes médias em 1 mordida)
-    // Um Velociraptor (Força 5) no nível 20 terá um fator de ~0.5 (precisa de 2 mordidas)
-    const strengthFactor = dinoStats.strength / 10;
-    const levelFactor = Math.pow(level, 0.7) / Math.pow(20, 0.7);
-    const biteDamage = 1.0 * strengthFactor * levelFactor;
-
-    // O dinossauro morde um pedaço físico absoluto
-    let actualDamage = Math.min(biteDamage, currentAbsoluteSize);
-
-    // Se o que sobrar for muito pouco (menos de 15% do original), devora tudo de uma vez
-    const remainingAfterBite = currentAbsoluteSize - actualDamage;
-    if (remainingAfterBite < initialSize * 0.15) {
-      actualDamage = currentAbsoluteSize;
-    }
-
-    // Convertendo o tamanho da mordida de volta para porcentagem para o sistema
-    const percentageDamage = actualDamage / initialSize;
-
-    useAppStore.getState().damageEdible(interactableId, percentageDamage);
-    // XP: multiplicador ajustado para 12 para compensar mordidas maiores
-    useAppStore.getState().consumeFood(actualDamage * 12);
-
-    setTimeout(() => {
-      isActionLocked.current = false;
-      setIsActing(false);
-      playAnimation('Idle');
-    }, durationMs);
-  };
-
-  const triggerAttackAction = () => {
-    if (isActionLocked.current) return;
-    isActionLocked.current = true;
-    setIsActing(true);
-    const action = playAnimation('Attack', false);
-    const durationMs = action && action.getClip() ? action.getClip().duration * 1000 : 1000;
-
-    // Lógica de dano a NPCs: verifica colisão com todos os NPCs próximos
-    if (playerRef.current) {
-      const px = playerRef.current.position.x;
-      const pz = playerRef.current.position.z;
-      const activeNPCs = NPCManager.getActiveNPCs();
-
-      for (const npc of activeNPCs) {
-        const event = playerAttackNPC(
-          px, pz, finalScale,
-          dinoStats.strength, level, npc
-        );
-        if (event) {
-          // XP por causar dano
-          useAppStore.getState().gainXp(Math.floor(event.damage * 5));
-          if (event.targetDied) {
-            // Bônus de XP por matar
-            useAppStore.getState().gainXp(50 * npc.level);
-          }
-          break; // Ataca apenas 1 NPC por vez
-        }
-      }
-    }
-
-    setTimeout(() => {
-      isActionLocked.current = false;
-      setIsActing(false);
-      playAnimation('Idle');
-    }, durationMs);
-  };
+  }, [takeDamage, triggerAttackAction, triggerEatAction]);
 
   // Movement Logic (8-directional relative to camera)
   useFrame((_, rawDelta) => {
@@ -585,7 +479,7 @@ export const PlayerDinosaur: React.FC = () => {
 
     const chunks = chunksRef.current;
     // Cap do raio: dinos gigantes (nível 100+) não precisam colidir com tudo a 10m de distância
-    const playerRadius = Math.min(2.0 * finalScale, 5.0);
+    const playerRadius = Math.min(dinoStats.collisionRadius * finalScale, 10.0);
 
     for (const chunk of chunks) {
       for (const tree of chunk.trees) {
@@ -640,7 +534,6 @@ export const PlayerDinosaur: React.FC = () => {
     // ----- DETECÇÃO DE ALIMENTOS PRÓXIMOS -----
     let nearestEdibleId: string | null = null;
     let minEdibleDist = Infinity;
-    const interactRadius = Math.min(6.0 * finalScale, 10.0);
     const interactRadiusSq = (interactRadius + 5) * (interactRadius + 5);
 
     const edibleStates = appState.edibleStates;
@@ -673,6 +566,34 @@ export const PlayerDinosaur: React.FC = () => {
       }
     }
 
+    // 4b. CARCAÇAS DE NPCs (CARNE)
+    if (diet === 'Carnivore') {
+      const activeNPCs = NPCManager.getActiveNPCs();
+      for (const npc of activeNPCs) {
+        if (npc.state === NPCState.Dead) {
+          const dx = px - npc.posX;
+          const dz = pz - npc.posZ;
+          const distSq = dx * dx + dz * dz;
+
+          if (distSq < interactRadiusSq) {
+            const remainingScale = edibleStates[npc.id] ?? 1.0;
+            if (remainingScale > 0) {
+              const npcStats = DINOSAUR_ROSTER.find(d => d.id === npc.speciesId);
+              const npcBaseScale = npcStats ? getNPCScaleFactor(npc.level, npcStats) : 0.5;
+              // Carcaças de NPCs são tratadas como alvos de Meat com escala baseada no dino original
+              // Multiplicamos por 4.0 para bater com a escala de recurso definida no NPCManager e EdiblesManager
+              const carcassScale = npcBaseScale * 4.0;
+              const dist = Math.sqrt(distSq) - (carcassScale * remainingScale * 1.0);
+              if (dist < interactRadius && dist < minEdibleDist) {
+                minEdibleDist = dist;
+                nearestEdibleId = npc.id;
+              }
+            }
+          }
+        }
+      }
+    }
+
     if (appState.interactableEdibleId !== nearestEdibleId) {
       appState.setInteractableEdibleId(nearestEdibleId);
     }
@@ -697,7 +618,7 @@ export const PlayerDinosaur: React.FC = () => {
 
     // Injetar dados de debug para o painel HTML (Apenas em DEV)
     if (import.meta.env.DEV) {
-      (window as any).dinoDebug = {
+      (window as WindowWithDinoDebug).dinoDebug = {
         speed: actualTotalSpeed,
         gameScale: finalScale / GLOBAL_SCALE_MODIFIER,
         worldScale: finalScale,
@@ -713,12 +634,16 @@ export const PlayerDinosaur: React.FC = () => {
     PlayerPositionRef.scale = finalScale;
     PlayerPositionRef.level = level;
     PlayerPositionRef.diet = dinoStats.diet;
+    PlayerPositionRef.strength = dinoStats.strength;
     PlayerPositionRef.isDead = isDead;
+    PlayerPositionRef.collisionRadius = dinoStats.collisionRadius;
+    PlayerPositionRef.collisionHeight = dinoStats.collisionHeight;
+    PlayerPositionRef.interactRadius = dinoStats.interactRadius;
   });
 
-  // Geometrias de debug compartilhadas para evitar recriação e lag
-  const debugGeo = useMemo(() => new THREE.CylinderGeometry(2, 2, 8, 12), []);
-  const debugInteractGeo = useMemo(() => new THREE.CylinderGeometry(6, 6, 8, 12), []);
+  // Geometrias de debug compartilhadas (Unidade 1x1x1 para escala fácil)
+  const debugGeo = useMemo(() => new THREE.CylinderGeometry(1, 1, 1, 12), []);
+  const debugInteractGeo = useMemo(() => new THREE.CylinderGeometry(1, 1, 1, 12), []);
   const debugMat = useMemo(() => new THREE.MeshBasicMaterial({ color: 'red', wireframe: true, transparent: true, opacity: 0.3 }), []);
   const debugInteractMat = useMemo(() => new THREE.MeshBasicMaterial({ color: 'orange', wireframe: true, transparent: true, opacity: 0.2 }), []);
 
@@ -754,15 +679,15 @@ export const PlayerDinosaur: React.FC = () => {
             <mesh
               geometry={debugGeo}
               material={debugMat}
-              position={[0, 4.0 * finalScale, 0]}
-              scale={[finalScale, finalScale, finalScale]}
+              position={[0, (dinoStats.collisionHeight / 2) * finalScale, 0]}
+              scale={[dinoStats.collisionRadius * finalScale, dinoStats.collisionHeight * finalScale, dinoStats.collisionRadius * finalScale]}
             />
             {/* Área de Interação (Comida) */}
             <mesh
               geometry={debugInteractGeo}
               material={debugInteractMat}
-              position={[0, 4.0 * finalScale, 0]}
-              scale={[finalScale, finalScale, finalScale]}
+              position={[0, (dinoStats.collisionHeight / 2) * finalScale, 0]}
+              scale={[interactRadius, dinoStats.collisionHeight * finalScale, interactRadius]}
             />
           </>
         )}

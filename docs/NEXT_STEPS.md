@@ -2,6 +2,20 @@
 
 Este documento serve como guia dos próximos passos após a configuração do projeto base. 
 
+## Backlog técnico executável (arquitetura e correções)
+
+Para executar as correções prioritárias com foco em arquitetura, SOLID, Strategy Pattern e prontidão para PeerJS, use o backlog detalhado em:
+
+- [BACKLOG_EXECUTAVEL_ARQUITETURA.md](./BACKLOG_EXECUTAVEL_ARQUITETURA.md)
+
+Esse backlog já está organizado por prioridade, com:
+- arquivos a alterar por etapa,
+- o que alterar em cada arquivo,
+- critério de aceite por tarefa,
+- ordem sugerida de execução por sprint.
+
+Recomendação: concluir E0, E1 e E2 antes de iniciar a camada de rede (E5).
+
 ## Fase 1: O Protótipo Solitário (Single Player)
 - [OK] **Assets e Modelos**: Utilizar Meshy.ai/Tripo3D para gerar dois modelos 3D simples (.glb/.gltf) texturizados e otimizados: um predador e uma presa.
 - [OK] **Integração de Animações**: Usar Mixamo para importar animações (Andar, Correr, Morder, Idle) para os modelos.

@@ -2,6 +2,8 @@ import { calculateDamage, getNPCScaleFactor } from '../../domain/models/NPCDinos
 import type { NPCData } from '../../domain/models/NPCDinosaur';
 import { DINOSAUR_ROSTER } from '../../domain/models/DinosaurStats';
 import { NPCState } from '../../domain/models/NPCState';
+import { PlayerPositionRef } from './PlayerPositionRef';
+import { calculateInteractRadius, isInInteractionRange } from '../../domain/services/DinosaurService';
 
 /**
  * Sistema de Combate puro — sem dependência de React ou Three.js.
@@ -26,6 +28,12 @@ const HIT_FLASH_DURATION = 0.3;
 /** Cooldown entre ataques consecutivos em segundos */
 const ATTACK_COOLDOWN = 1.2;
 
+/** Janela de retaliação de carnívoro após ser atacado pelo player */
+const PLAYER_RETALIATION_DURATION = 6.0;
+
+/** Janela de defesa em bando de herbívoros após agressão do player */
+const HERBIVORE_PACK_RETALIATION_DURATION = 6.0;
+
 /**
  * Tenta executar um ataque de um NPC contra outro NPC.
  * Retorna o evento de combate ou null se o ataque não aconteceu.
@@ -40,21 +48,18 @@ export function npcAttackNPC(
   const attackerStats = DINOSAUR_ROSTER.find(d => d.id === attacker.speciesId);
   if (!attackerStats) return null;
 
-  // Verifica colisão (bounding spheres)
+  // Verifica colisão (bounding spheres) usando raio de interação
   const attackerScale = getNPCScaleFactor(attacker.level, attackerStats);
   const targetStats = DINOSAUR_ROSTER.find(d => d.id === target.speciesId);
   if (!targetStats) return null;
   const targetScale = getNPCScaleFactor(target.level, targetStats);
 
-  const attackRadius = Math.min(3.0 * attackerScale, 5.0);
-  const targetRadius = Math.min(2.0 * targetScale, 4.0);
-  const maxDist = attackRadius + targetRadius;
+  const interactRadius = calculateInteractRadius(attackerStats.interactRadius, attackerScale);
+  const targetRadius = targetStats.collisionRadius * targetScale;
 
-  const dx = attacker.posX - target.posX;
-  const dz = attacker.posZ - target.posZ;
-  const distSq = dx * dx + dz * dz;
-
-  if (distSq > maxDist * maxDist) return null;
+  if (!isInInteractionRange(attacker.posX, attacker.posZ, target.posX, target.posZ, interactRadius, targetRadius)) {
+    return null;
+  }
 
   // Calcula e aplica dano
   const damage = calculateDamage(attackerStats.strength, attacker.level);
@@ -100,15 +105,14 @@ export function npcAttackPlayer(
   if (!attackerStats) return 0;
 
   const attackerScale = getNPCScaleFactor(attacker.level, attackerStats);
-  const attackRadius = Math.min(3.0 * attackerScale, 5.0);
-  const targetRadius = Math.min(2.0 * playerScale, 4.0);
-  const maxDist = attackRadius + targetRadius;
+  const interactRadius = calculateInteractRadius(attackerStats.interactRadius, attackerScale);
 
-  const dx = attacker.posX - playerPosX;
-  const dz = attacker.posZ - playerPosZ;
-  const distSq = dx * dx + dz * dz;
+  // O jogador usa sua própria collisionRadius sincronizada na PlayerPositionRef
+  const targetRadius = PlayerPositionRef.collisionRadius * playerScale;
 
-  if (distSq > maxDist * maxDist) return 0;
+  if (!isInInteractionRange(attacker.posX, attacker.posZ, playerPosX, playerPosZ, interactRadius, targetRadius)) {
+    return 0;
+  }
 
   const damage = calculateDamage(attackerStats.strength, attacker.level);
 
@@ -139,20 +143,37 @@ export function playerAttackNPC(
   if (!targetStats) return null;
   const targetScale = getNPCScaleFactor(target.level, targetStats);
 
-  const attackRadius = Math.min(4.0 * playerScale, 6.0);
-  const targetRadius = Math.min(2.0 * targetScale, 4.0);
-  const maxDist = attackRadius + targetRadius;
+  const interactRadius = calculateInteractRadius(PlayerPositionRef.interactRadius, playerScale);
+  const targetRadius = targetStats.collisionRadius * targetScale;
 
-  const dx = playerPosX - target.posX;
-  const dz = playerPosZ - target.posZ;
-  const distSq = dx * dx + dz * dz;
-
-  if (distSq > maxDist * maxDist) return null;
+  if (!isInInteractionRange(playerPosX, playerPosZ, target.posX, target.posZ, interactRadius, targetRadius)) {
+    return null;
+  }
 
   const damage = calculateDamage(playerStrength, playerLevel);
   target.health = Math.max(0, target.health - damage);
   target.isHit = true;
   target.hitTimer = HIT_FLASH_DURATION;
+
+  // Se o player atacar um carnívoro vivo, força janela de revide.
+  // Isso cobre a "lacuna" onde ele não perseguiria naturalmente.
+  if (target.diet === 'Carnivore') {
+    target.retaliatePlayerTimer = PLAYER_RETALIATION_DURATION;
+    target.huntingTargetId = 'player';
+    target.fleeFromId = null;
+    target.state = NPCState.Hunting;
+    target.animationIntent = 'Run';
+    target.stateTimer = 0;
+  }
+
+  if (target.diet === 'Herbivore') {
+    target.retaliatePlayerPackTimer = HERBIVORE_PACK_RETALIATION_DURATION;
+    target.huntingTargetId = 'player';
+    target.fleeFromId = null;
+    target.state = NPCState.Hunting;
+    target.animationIntent = 'Run';
+    target.stateTimer = 0;
+  }
 
   const died = target.health <= 0;
   if (died) {
@@ -186,5 +207,11 @@ export function updateCombatTimers(npc: NPCData, delta: number): void {
   }
   if (npc.stateTimer > 0) {
     npc.stateTimer -= delta;
+  }
+  if (npc.retaliatePlayerTimer > 0) {
+    npc.retaliatePlayerTimer = Math.max(0, npc.retaliatePlayerTimer - delta);
+  }
+  if (npc.retaliatePlayerPackTimer > 0) {
+    npc.retaliatePlayerPackTimer = Math.max(0, npc.retaliatePlayerPackTimer - delta);
   }
 }

@@ -20,6 +20,8 @@ interface AppState {
   // Game Mechanics
   foodScore: number;
   edibleStates: Record<string, number>; // ID -> remaining size
+  respawnTimers: Record<string, number>; // ID -> seconds until regrow starts
+  edibleGrowthLocks: Record<string, number>; // Plant ID -> seconds while an eater is interacting
   interactableEdibleId: string | null;
   playerChunkPos: { x: number, z: number };
   
@@ -49,6 +51,7 @@ interface AppState {
   setPlayerChunkPos: (x: number, z: number) => void;
   consumeFood: (points: number) => void;
   damageEdible: (id: string, damage: number) => void;
+  regrowEdibles: (secondsPassed: number) => void;
   setInteractableEdibleId: (id: string | null) => void;
   
   // RPG Actions
@@ -79,6 +82,8 @@ export const useAppStore = create<AppState>((set) => ({
 
   foodScore: 0,
   edibleStates: {},
+  respawnTimers: {},
+  edibleGrowthLocks: {},
   interactableEdibleId: null,
   playerChunkPos: { x: 0, z: 0 },
 
@@ -137,10 +142,115 @@ export const useAppStore = create<AppState>((set) => ({
     };
   }),
   damageEdible: (id, damage) => set((state) => {
+    const isPlant = id.startsWith('p_');
+    const isMeat = id.startsWith('m_');
+    const isCarcass = id.startsWith('npc_');
     const currentSize = state.edibleStates[id] ?? 1.0;
     const newSize = Math.max(0, currentSize - damage);
+
+    const newRespawnTimers = { ...state.respawnTimers };
+    const newGrowthLocks = { ...state.edibleGrowthLocks };
+
+    // Carcaças nunca regeneram: remove qualquer estado residual de timer/trava.
+    if (isCarcass) {
+      delete newRespawnTimers[id];
+      delete newGrowthLocks[id];
+    }
+
+    // Plantas pausam crescimento enquanto algum dinossauro está comendo.
+    // Cada mordida renova a trava por 2 segundos.
+    if (isPlant && newSize > 0) {
+      newGrowthLocks[id] = 2;
+    }
+
+    if (!isCarcass && newSize <= 0) {
+      if (isPlant) {
+        // Arbustos/plantas seguem mecânica de regrowth gradual após breve espera.
+        newRespawnTimers[id] = 30;
+      } else if (isMeat) {
+        // Carnes estáticas do mapa: respawn completo após 1 ciclo de dia/noite.
+        newRespawnTimers[id] = 300;
+      }
+    }
+
     return {
-      edibleStates: { ...state.edibleStates, [id]: newSize }
+      edibleStates: { ...state.edibleStates, [id]: newSize },
+      respawnTimers: newRespawnTimers,
+      edibleGrowthLocks: newGrowthLocks,
+    };
+  }),
+  regrowEdibles: (seconds) => set((state) => {
+    const newStates = { ...state.edibleStates };
+    const newTimers = { ...state.respawnTimers };
+    const newGrowthLocks = { ...state.edibleGrowthLocks };
+    let hasChanges = false;
+
+    for (const id in newGrowthLocks) {
+      const next = newGrowthLocks[id] - seconds;
+      if (next > 0) {
+        newGrowthLocks[id] = next;
+      } else {
+        delete newGrowthLocks[id];
+      }
+      hasChanges = true;
+    }
+
+    for (const id in newStates) {
+      if (id.startsWith('npc_')) continue; // Carcaças não regeneram
+
+      const isPlant = id.startsWith('p_');
+      const isMeat = id.startsWith('m_');
+
+      if (!isPlant && !isMeat) continue;
+
+      const size = newStates[id];
+
+      if (isMeat) {
+        // Carne não cresce gradualmente; apenas respawna inteira quando o timer termina.
+        if (size <= 0 && newTimers[id] !== undefined) {
+          newTimers[id] -= seconds;
+          hasChanges = true;
+
+          if (newTimers[id] <= 0) {
+            delete newTimers[id];
+            delete newStates[id];
+          }
+        }
+        continue;
+      }
+
+      // Plantas/arbustos: crescimento gradual com trava durante interação.
+      if (size < 1.0) {
+        if (size <= 0) {
+          if (newTimers[id] !== undefined && newTimers[id] > 0) {
+            newTimers[id] -= seconds;
+            hasChanges = true;
+            continue;
+          }
+
+          delete newTimers[id];
+          newStates[id] = 0.01;
+          hasChanges = true;
+          continue;
+        }
+
+        if ((newGrowthLocks[id] ?? 0) > 0) {
+          continue;
+        }
+
+        newStates[id] = Math.min(1.0, size + (0.02 * seconds));
+        if (newStates[id] >= 1.0) {
+          delete newStates[id]; // Limpa do estado se voltou ao normal (100%)
+        }
+        hasChanges = true;
+      }
+    }
+
+    if (!hasChanges) return {};
+    return {
+      edibleStates: newStates,
+      respawnTimers: newTimers,
+      edibleGrowthLocks: newGrowthLocks,
     };
   }),
   setInteractableEdibleId: (id) => set({ interactableEdibleId: id }),
@@ -161,6 +271,7 @@ export const useAppStore = create<AppState>((set) => ({
       foodEaten: 0,
       foodScore: 0,
       edibleStates: {},
+      edibleGrowthLocks: {},
       interactableEdibleId: null
     };
   }),
@@ -197,7 +308,7 @@ export const useAppStore = create<AppState>((set) => ({
   incrementTimeAlive: () => set((state) => ({ timeAlive: state.timeAlive + 1 })),
   resetGameStats: () => set({
     level: 1, xp: 0, xpNeeded: 100, isDead: false, isExhausted: false, timeAlive: 0, foodEaten: 0, foodScore: 0, health: 100, maxHealth: 100, stamina: 100, maxStamina: 100,
-    edibleStates: {}, interactableEdibleId: null
+    edibleStates: {}, edibleGrowthLocks: {}, interactableEdibleId: null
   }),
   setLevel: (level) => set({ level: Math.max(1, level) }),
   setDebugZoomUnlocked: (v) => set({ debugZoomUnlocked: v })
