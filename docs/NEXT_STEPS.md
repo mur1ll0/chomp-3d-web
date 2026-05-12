@@ -39,6 +39,10 @@ Recomendação: concluir E0, E1 e E2 antes de iniciar a camada de rede (E5).
 - [OK] **Geração de NPCs por Chunk**: Spawn determinístico por seed — Herbívoros em grupos (2-4) perto de árvores, Carnívoros solitários e raros. Garantia de 1 carnívoro por área 5×5 chunks. Nível baseado na distância do centro.
 - [OK] **Arquitetura Host-Ready**: NPCManager é Singleton puro JS (sem React state). No futuro modo online, apenas o Host roda update() e envia snapshots via PeerJS.
 
+## Fase Pré-4: Ajustes finos antes da implementação
+- **Visão dos NPCs**: Quando um dinossauro esta atacando outro, se durante a animação das costas você se mover para as costas dele, ele perde você de vista e não ataca mais. Adicionar um estado de perdeu de vista aonde elel tenta girar 360 graus a redor dele para ver se o dino que ele atacou ainda esta ao redor dele. Aumente também o code de visão para ser um pouco mais largo (deve permitir uma visão lateral e não somente frontal).
+- **Desempenho**: Verifique possível problemas que causem drop de FPS, algum cache, ou trechos de código desnecessários, ou até mesmo problemas com recursos assíncronos. Garanta que o jogo esteja flúido e não tenha "engasgos".
+
 ## Fase 4: A Conexão P2P (Multiplayer)
 - [ ] **Integração WebRTC**: Iniciar as classes de rede baseadas no PeerJS na pasta `infrastructure/network`.
 - [ ] **Sessão (Bandos)**: Criar a UI para gerar ou inserir um "Código de Bando" (Session ID).

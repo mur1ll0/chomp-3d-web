@@ -7,8 +7,14 @@ type DinoDebugInfo = {
   worldScale: number;
 };
 
+type NpcCountsInfo = {
+  herbivores: number;
+  carnivores: number;
+};
+
 type WindowWithDinoDebug = Window & {
   dinoDebug?: DinoDebugInfo;
+  dinoNpcCounts?: NpcCountsInfo;
 };
 
 export const DebugPanel: React.FC = () => {
@@ -16,12 +22,15 @@ export const DebugPanel: React.FC = () => {
     level, setLevel, 
     debugZoomUnlocked, setDebugZoomUnlocked,
     selectedDinoId, isDead,
-    debugCollisions, toggleDebugCollisions
+    debugCollisions, toggleDebugCollisions,
+    debugNpcLevels, toggleDebugNpcLevels,
+    debugNpcVision, toggleDebugNpcVision,
   } = useAppStore();
 
   const [fps, setFps] = useState(0);
   const [currentSpeed, setCurrentSpeed] = useState(0);
   const [currentSize, setCurrentSize] = useState({ game: 0, world: 0 });
+  const [npcCounts, setNpcCounts] = useState({ herbivores: 0, carnivores: 0 });
   
   const frameCount = useRef(0);
   const lastTime = useRef(0);
@@ -51,6 +60,11 @@ export const DebugPanel: React.FC = () => {
             game: debugInfo.gameScale || 0,
             world: debugInfo.worldScale || 0
           });
+        }
+
+        const counts = (window as WindowWithDinoDebug).dinoNpcCounts;
+        if (counts) {
+          setNpcCounts(counts);
         }
       }
     };
@@ -99,6 +113,10 @@ export const DebugPanel: React.FC = () => {
         <div>Game Scale: <span style={{ color: '#fff' }}>{currentSize.game.toFixed(2)}</span></div>
         <div>World Scale: <span style={{ color: '#fff' }}>{currentSize.world.toFixed(3)}</span></div>
         <div>Dino: <span style={{ color: '#fff' }}>{selectedDinoId}</span></div>
+        <div style={{ marginTop: '4px', borderTop: '1px solid #333', paddingTop: '4px' }}>
+          <div>Herbívoros: <span style={{ color: '#4caf50' }}>{npcCounts.herbivores}</span></div>
+          <div>Carnívoros: <span style={{ color: '#f44336' }}>{npcCounts.carnivores}</span></div>
+        </div>
       </div>
 
       <div style={{ marginBottom: '10px' }}>
@@ -124,31 +142,26 @@ export const DebugPanel: React.FC = () => {
       </div>
 
       <div>
-        <button 
-          onClick={(e) => { setDebugZoomUnlocked(!debugZoomUnlocked); e.currentTarget.blur(); }}
-          style={{
-            ...buttonStyle,
-            width: '100%',
-            backgroundColor: debugZoomUnlocked ? '#225522' : '#442222',
-            color: '#fff',
-            borderColor: debugZoomUnlocked ? '#00ff00' : '#ff0000',
-            marginBottom: '5px'
-          }}
-        >
-          {debugZoomUnlocked ? '🔓 ZOOM UNLOCKED' : '🔒 ZOOM LOCKED'}
-        </button>
-        <button 
-          onClick={(e) => { toggleDebugCollisions(); e.currentTarget.blur(); }}
-          style={{
-            ...buttonStyle,
-            width: '100%',
-            backgroundColor: debugCollisions ? '#225522' : '#442222',
-            color: '#fff',
-            borderColor: debugCollisions ? '#00ff00' : '#ff0000'
-          }}
-        >
-          {debugCollisions ? '📦 HIDE COLLISIONS' : '📦 SHOW COLLISIONS'}
-        </button>
+        <ToggleRow
+          label="Zoom Unlock"
+          enabled={debugZoomUnlocked}
+          onToggle={() => setDebugZoomUnlocked(!debugZoomUnlocked)}
+        />
+        <ToggleRow
+          label="Collision Volumes"
+          enabled={debugCollisions}
+          onToggle={toggleDebugCollisions}
+        />
+        <ToggleRow
+          label="NPC Level Labels"
+          enabled={debugNpcLevels}
+          onToggle={toggleDebugNpcLevels}
+        />
+        <ToggleRow
+          label="NPC Vision Debug"
+          enabled={debugNpcVision}
+          onToggle={toggleDebugNpcVision}
+        />
         <div style={{ fontSize: '10px', marginTop: '5px', opacity: 0.7 }}>
           (Dev features for internal testing)
         </div>
@@ -166,4 +179,53 @@ const buttonStyle: React.CSSProperties = {
   borderRadius: '4px',
   fontWeight: 'bold',
   outline: 'none'
+};
+
+const toggleRootStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  background: 'rgba(255,255,255,0.04)',
+  border: '1px solid #444',
+  borderRadius: '8px',
+  padding: '6px 8px',
+  marginBottom: '5px',
+  color: '#fff'
+};
+
+const toggleTrackStyle: React.CSSProperties = {
+  width: '36px',
+  height: '18px',
+  borderRadius: '999px',
+  border: '1px solid #555',
+  display: 'flex',
+  alignItems: 'center',
+  padding: '0 2px',
+  cursor: 'pointer',
+};
+
+const toggleKnobStyle: React.CSSProperties = {
+  width: '12px',
+  height: '12px',
+  borderRadius: '999px',
+  transition: 'transform 120ms ease',
+};
+
+const ToggleRow: React.FC<{ label: string; enabled: boolean; onToggle: () => void }> = ({ label, enabled, onToggle }) => {
+  return (
+    <div style={toggleRootStyle}>
+      <span>{label}</span>
+      <button
+        onClick={(e) => { onToggle(); e.currentTarget.blur(); }}
+        style={{
+          ...toggleTrackStyle,
+          backgroundColor: enabled ? '#225522' : '#442222',
+          borderColor: enabled ? '#00ff00' : '#aa3333',
+          justifyContent: enabled ? 'flex-end' : 'flex-start',
+        }}
+      >
+        <span style={{ ...toggleKnobStyle, backgroundColor: enabled ? '#00ff88' : '#ff6666' }} />
+      </button>
+    </div>
+  );
 };

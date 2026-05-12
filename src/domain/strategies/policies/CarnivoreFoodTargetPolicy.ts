@@ -6,7 +6,7 @@ export class CarnivoreFoodTargetPolicy implements IFoodTargetPolicy {
   foodRadius = 35;
 
   findFood(npc: NPCData, context: FoodSearchContext): FoodTarget | null {
-    const { nearbyNPCs, ediblePositions, playerPos, playerLevel } = context;
+    const { nearbyNPCs, ediblePositions, playerPos, playerLevel, playerVisible, playerIsDead } = context;
     const foodRadiusSq = this.foodRadius * this.foodRadius;
     let bestDist = Infinity;
     let bestTarget: FoodTarget | null = null;
@@ -26,7 +26,8 @@ export class CarnivoreFoodTargetPolicy implements IFoodTargetPolicy {
       }
     }
 
-    if (playerLevel <= npc.level + 2) {
+    // Player é alvo apenas se visível (FOV + line-of-sight)
+    if (!playerIsDead && playerVisible && playerLevel <= npc.level + 2) {
       const dx = playerPos.x - npc.posX;
       const dz = playerPos.z - npc.posZ;
       const distSq = dx * dx + dz * dz;

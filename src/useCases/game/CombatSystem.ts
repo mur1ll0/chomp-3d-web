@@ -100,6 +100,7 @@ export function npcAttackPlayer(
 ): number {
   if (attacker.attackCooldown > 0) return 0;
   if (attacker.state === NPCState.Dead) return 0;
+  if (PlayerPositionRef.isDead) return 0;
 
   const attackerStats = DINOSAUR_ROSTER.find(d => d.id === attacker.speciesId);
   if (!attackerStats) return 0;

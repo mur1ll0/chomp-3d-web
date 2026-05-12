@@ -1,9 +1,6 @@
 import type { IMovementPolicy, FleeDestinationContext, MovementIntentContext, WanderDestination, WanderDestinationContext } from '../../interfaces/IMovementPolicy';
 import { NPCState } from '../../models/NPCState';
-
-function seededNoise(x: number, z: number, salt: number = 0): number {
-  return Math.abs((Math.sin((x + salt) * 12.9898 + (z + salt) * 78.233) * 43758.5453) % 1);
-}
+import { seededNoise } from '../../utils/MathUtils';
 
 export class CarnivoreMovementPolicy implements IMovementPolicy {
   pickFleeDestination(context: FleeDestinationContext): { x: number; z: number } {

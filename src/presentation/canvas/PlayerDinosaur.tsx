@@ -15,33 +15,7 @@ import { playerAttackNPC } from '../../useCases/game/CombatSystem';
 import { PlayerPositionRef } from '../../useCases/game/PlayerPositionRef';
 import { calculateFinalScale, calculateInteractRadius, calculateBiteDamage, calculatePercentageDamage, calculateCarcassNutritionByLevel } from '../../domain/services/DinosaurService';
 import { useDinosaurAnimations } from '../hooks/useDinosaurAnimations';
-
-/**
- * Helper para clonar SkinnedMeshes corretamente (incluindo esqueleto).
- */
-function cloneSkinnedMesh(source: THREE.Group) {
-  const clone = source.clone(true);
-  const nodes: Record<string, THREE.Object3D> = {};
-  const sourceNodes: Record<string, THREE.Object3D> = {};
-
-  clone.traverse(node => { nodes[node.name] = node; });
-  source.traverse(node => { sourceNodes[node.name] = node; });
-
-  clone.traverse(node => {
-    if ((node as THREE.SkinnedMesh).isSkinnedMesh) {
-      const mesh = node as THREE.SkinnedMesh;
-      const sourceMesh = sourceNodes[node.name] as THREE.SkinnedMesh;
-      if (sourceMesh && sourceMesh.skeleton) {
-        mesh.skeleton = sourceMesh.skeleton.clone();
-        mesh.bind(mesh.skeleton, sourceMesh.bindMatrix);
-        mesh.skeleton.bones = sourceMesh.skeleton.bones.map(bone => {
-          return nodes[bone.name] as THREE.Bone;
-        });
-      }
-    }
-  });
-  return clone;
-}
+import { cloneSkinnedMesh } from '../utils/ThreeUtils';
 
 // Vetores reutilizáveis para evitar alocações por frame (GC pressure)
 const _forward = new THREE.Vector3();

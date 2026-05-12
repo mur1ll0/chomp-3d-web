@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useMemo, useLayoutEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { useGLTF } from '@react-three/drei';
+import { Text, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { NPCManager } from '../../useCases/game/NPCManager';
 import { DINOSAUR_ROSTER } from '../../domain/models/DinosaurStats';
@@ -14,52 +14,29 @@ import { useDinosaurAnimations } from '../hooks/useDinosaurAnimations';
 import { ZustandGameStateGateway } from '../../infrastructure/adapters/ZustandGameStateGateway';
 import { MapWorldQueryGateway } from '../../infrastructure/adapters/MapWorldQueryGateway';
 import { WORLD_SEED } from '../../infrastructure/generation/MapGenerator';
+import { getNpcPerceptionProfile } from '../../useCases/game/systems/NPCPerceptionUtils';
+import { cloneSkinnedMesh } from '../utils/ThreeUtils';
 
-// Pre-load all models
-DINOSAUR_ROSTER.forEach(d => useGLTF.preload(d.modelPath));
-
+// Singletons reutilizáveis para evitar alocações no loop de render
 const _tempPos = new THREE.Vector3();
 const _tempScale = new THREE.Vector3();
-
-/**
- * Helper para clonar SkinnedMeshes corretamente (incluindo esqueleto).
- */
-function cloneSkinnedMesh(source: THREE.Group) {
-  const clone = source.clone(true);
-  const nodes: Record<string, THREE.Object3D> = {};
-  const sourceNodes: Record<string, THREE.Object3D> = {};
-  
-  clone.traverse(node => { nodes[node.name] = node; });
-  source.traverse(node => { sourceNodes[node.name] = node; });
-
-  clone.traverse(node => {
-    if ((node as THREE.SkinnedMesh).isSkinnedMesh) {
-      const mesh = node as THREE.SkinnedMesh;
-      const sourceMesh = sourceNodes[node.name] as THREE.SkinnedMesh;
-      if (sourceMesh && sourceMesh.skeleton) {
-        mesh.skeleton = sourceMesh.skeleton.clone();
-        mesh.bind(mesh.skeleton, sourceMesh.bindMatrix);
-        // Reconecta os ossos aos novos nós do clone
-        mesh.skeleton.bones = sourceMesh.skeleton.bones.map(bone => {
-          return nodes[bone.name] as THREE.Bone;
-        });
-      }
-    }
-  });
-  return clone;
-}
 
 /**
  * Instância individual de um NPC.
  */
 const NPCInstance: React.FC<{ 
   npc: NPCData; 
-  debug: boolean; 
+  debug: boolean;
+  debugLevel: boolean;
+  debugVision: boolean;
   debugGeo: THREE.BufferGeometry; 
   debugMat: THREE.Material;
   debugInteractMat: THREE.Material;
-}> = React.memo(({ npc, debug, debugGeo, debugMat, debugInteractMat }) => {
+  debugVisionGeo: THREE.BufferGeometry;
+  debugVisionMat: THREE.Material;
+}> = React.memo(({ npc, debug, debugLevel, debugVision, debugGeo, debugMat, debugInteractMat, debugVisionGeo, debugVisionMat }) => {
   const stats = useMemo(() => DINOSAUR_ROSTER.find(d => d.id === npc.speciesId)!, [npc.speciesId]);
+  const perception = useMemo(() => getNpcPerceptionProfile(npc.diet), [npc.diet]);
   const gltf = useGLTF(stats.modelPath);
   const groupRef = useRef<THREE.Group>(null);
   const innerGroupRef = useRef<THREE.Group>(null);
@@ -162,6 +139,8 @@ const NPCInstance: React.FC<{
   }, [clonedScene]);
 
   const currentScale = getNPCScaleFactor(npc.level, stats);
+  const visionRadius = Math.tan(perception.halfFovRad) * perception.viewDistance;
+  const eyeHeight = (stats.collisionHeight * 0.42 + perception.eyeHeight) * currentScale;
 
   return (
     <group ref={groupRef}>
@@ -185,12 +164,34 @@ const NPCInstance: React.FC<{
           scale={[calculateInteractRadius(stats.interactRadius, currentScale), stats.collisionHeight * currentScale, calculateInteractRadius(stats.interactRadius, currentScale)]}
         />
       )}
+      {debugVision && npc.state !== NPCState.Dead && (
+        <mesh
+          geometry={debugVisionGeo}
+          material={debugVisionMat}
+          position={[0, eyeHeight, perception.viewDistance * 0.5]}
+          rotation={[Math.PI / 2, 0, 0]}
+          scale={[visionRadius, perception.viewDistance, visionRadius]}
+        />
+      )}
+      {debugLevel && npc.state !== NPCState.Dead && (
+        <Text
+          position={[0, (stats.collisionHeight + 1.6) * currentScale, 0]}
+          fontSize={Math.max(0.4, currentScale * 0.9)}
+          color="#fef08a"
+          anchorX="center"
+          anchorY="middle"
+        >
+          {`Lv ${npc.level}`}
+        </Text>
+      )}
     </group>
   );
 });
 
 export const NPCDinosaurs: React.FC = () => {
   const debugCollisions = useAppStore(s => s.debugCollisions);
+  const debugNpcLevels = useAppStore(s => s.debugNpcLevels);
+  const debugNpcVision = useAppStore(s => s.debugNpcVision);
   const [renderList, setRenderList] = React.useState<NPCData[]>([]);
   const updateCounter = useRef(0);
   const simulationAccumulator = useRef(0);
@@ -203,6 +204,11 @@ export const NPCDinosaurs: React.FC = () => {
   const debugGeo = useMemo(() => new THREE.CylinderGeometry(1, 1, 1, 8), []);
   const debugMat = useMemo(() => new THREE.MeshBasicMaterial({ color: 'red', wireframe: true, transparent: true, opacity: 0.3 }), []);
   const debugInteractMat = useMemo(() => new THREE.MeshBasicMaterial({ color: 'yellow', wireframe: true, transparent: true, opacity: 0.15 }), []);
+  const debugVisionGeo = useMemo(() => new THREE.ConeGeometry(1, 1, 20, 1, true), []);
+  const debugVisionMat = useMemo(
+    () => new THREE.MeshBasicMaterial({ color: '#38bdf8', wireframe: true, transparent: true, opacity: 0.22, side: THREE.DoubleSide }),
+    []
+  );
 
   useLayoutEffect(() => {
     NPCManager.configureGateways(gameStateGateway, worldQueryGateway);
@@ -241,9 +247,13 @@ export const NPCDinosaurs: React.FC = () => {
           <NPCInstance 
             npc={npc} 
             debug={debugCollisions} 
+            debugLevel={debugNpcLevels}
+            debugVision={debugNpcVision}
             debugGeo={debugGeo} 
             debugMat={debugMat} 
             debugInteractMat={debugInteractMat}
+            debugVisionGeo={debugVisionGeo}
+            debugVisionMat={debugVisionMat}
           />
         </React.Suspense>
       ))}

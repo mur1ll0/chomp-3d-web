@@ -32,6 +32,16 @@ export interface NPCData {
   retaliatePlayerTimer: number; // Janela de revidar quando for atacado pelo player
   retaliatePlayerPackTimer: number; // Janela de defesa de bando contra agressão do player
 
+  // Movement resources
+  stamina: number;
+  maxStamina: number;
+  isExhausted: boolean;
+
+  // Vertical locomotion
+  yVelocity: number;
+  isGrounded: boolean;
+  jumpCooldown: number;
+
   // Visual state (para renderização)
   animationIntent: string; // 'Idle' | 'Walk' | 'Run' | 'Attack' | 'Eat' | 'Death'
   isHit: boolean; // Flash vermelho
@@ -107,6 +117,12 @@ export function createNPC(
     defendingCarnivoreId: null,
     retaliatePlayerTimer: 0,
     retaliatePlayerPackTimer: 0,
+    stamina: 100,
+    maxStamina: 100,
+    isExhausted: false,
+    yVelocity: 0,
+    isGrounded: true,
+    jumpCooldown: 0,
 
     animationIntent: 'Idle',
     isHit: false,

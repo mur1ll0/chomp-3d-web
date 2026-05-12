@@ -3,10 +3,10 @@ import type { Diet } from '../../models/DinosaurStats';
 import type { NPCData } from '../../models/NPCDinosaur';
 
 export class HerbivoreCombatPolicy implements ICombatPolicy {
-  shouldAttackPlayer(npc: NPCData, playerLevel: number, playerDiet: Diet): boolean {
+  shouldAttackPlayer(npc: NPCData, _playerLevel: number, _playerDiet: Diet): boolean {
+    void _playerLevel;
+    void _playerDiet;
     return npc.retaliatePlayerPackTimer > 0;
-    void playerLevel;
-    void playerDiet;
     // Herbívoros só atacam player para defender o bando após agressão.
   }
 

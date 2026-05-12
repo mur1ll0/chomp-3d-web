@@ -193,6 +193,7 @@ Status:
 - [OK] Implementado em 2026-05-12 com fixed timestep de 20Hz em NPCDinosaurs (acumulador + substeps), mantendo render em frame rate livre.
 
 ## E4 - Performance e estabilidade de FPS
+OBS: Antes de executar o E4, veja no arquivo NEXT_STEPS a Fase 4 para orientações de como implementar. E verifique se antes da fase 4 existe algo que ainda não foi implementado.
 
 ### E4.1 Implementar eviction no cache de chunks [OK]
 Arquivos:

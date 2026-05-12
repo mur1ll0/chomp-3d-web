@@ -13,6 +13,8 @@ export interface FoodSearchContext {
   ediblePositions: FoodSourcePoint[];
   playerPos: { x: number; z: number };
   playerLevel: number;
+  playerVisible: boolean;
+  playerIsDead: boolean;
 }
 
 export interface FoodTarget {

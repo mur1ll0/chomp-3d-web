@@ -36,4 +36,10 @@ export interface IMovementPolicy {
   pickFleeDestination(context: FleeDestinationContext): { x: number; z: number };
   pickWanderDestination(context: WanderDestinationContext): WanderDestination;
   getMovementIntent(context: MovementIntentContext): MovementIntent;
+  
+  /**
+   * Escolhe posição para defender bando contra carnívoro.
+   * Apenas herbívoros implementam essa lógica.
+   */
+  pickDefenseDestination?(context: FleeDestinationContext): { x: number; z: number };
 }

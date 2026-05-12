@@ -16,6 +16,8 @@ interface AppState {
   renderDistance: number;
   isSettingsOpenInGame: boolean;
   debugCollisions: boolean;
+  debugNpcLevels: boolean;
+  debugNpcVision: boolean;
 
   // Game Mechanics
   foodScore: number;
@@ -48,6 +50,8 @@ interface AppState {
   setRenderDistance: (dist: number) => void;
   toggleSettingsInGame: () => void;
   toggleDebugCollisions: () => void;
+  toggleDebugNpcLevels: () => void;
+  toggleDebugNpcVision: () => void;
   setPlayerChunkPos: (x: number, z: number) => void;
   consumeFood: (points: number) => void;
   damageEdible: (id: string, damage: number) => void;
@@ -79,6 +83,8 @@ export const useAppStore = create<AppState>((set) => ({
   renderDistance: 2,
   isSettingsOpenInGame: false,
   debugCollisions: false,
+  debugNpcLevels: false,
+  debugNpcVision: false,
 
   foodScore: 0,
   edibleStates: {},
@@ -110,6 +116,8 @@ export const useAppStore = create<AppState>((set) => ({
   setRenderDistance: (dist) => set({ renderDistance: dist }),
   toggleSettingsInGame: () => set((state) => ({ isSettingsOpenInGame: !state.isSettingsOpenInGame })),
   toggleDebugCollisions: () => set((state) => ({ debugCollisions: !state.debugCollisions })),
+  toggleDebugNpcLevels: () => set((state) => ({ debugNpcLevels: !state.debugNpcLevels })),
+  toggleDebugNpcVision: () => set((state) => ({ debugNpcVision: !state.debugNpcVision })),
   setPlayerChunkPos: (x, z) => set({ playerChunkPos: { x, z } }),
   consumeFood: (points) => set((state) => {
     // Cada comida dá 10 de XP por ponto de nutrição (ex: tamanho)
@@ -144,7 +152,7 @@ export const useAppStore = create<AppState>((set) => ({
   damageEdible: (id, damage) => set((state) => {
     const isPlant = id.startsWith('p_');
     const isMeat = id.startsWith('m_');
-    const isCarcass = id.startsWith('npc_');
+    const isCarcass = id.startsWith('npc_') || id === 'player_carcass';
     const currentSize = state.edibleStates[id] ?? 1.0;
     const newSize = Math.max(0, currentSize - damage);
 

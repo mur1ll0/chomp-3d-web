@@ -56,4 +56,9 @@ export class CarnivoreThreatPolicy implements IThreatPolicy {
 
     return null;
   }
+
+  // Carnívoros não defendem bandos — ignoram implementação
+  canDefendAgainstThreat(): boolean {
+    return false;
+  }
 }

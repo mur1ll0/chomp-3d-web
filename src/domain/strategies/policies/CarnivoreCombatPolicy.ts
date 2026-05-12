@@ -10,7 +10,6 @@ export class CarnivoreCombatPolicy implements ICombatPolicy {
 
   canAttackNpcTarget(npc: NPCData, target: NPCData): boolean {
     if (target.id === npc.id) return false;
-    if (target.diet === 'Carnivore') return false;
     return true;
   }
 }

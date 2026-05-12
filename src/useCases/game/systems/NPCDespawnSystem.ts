@@ -9,7 +9,7 @@ export class NPCDespawnSystem {
     spawnedChunks: Set<string>;
     playerChunkX: number;
     playerChunkZ: number;
-  }): void {
+  }): string[] {
     const { npcs, spawnedChunks, playerChunkX, playerChunkZ } = args;
     const keysToRemove: string[] = [];
 
@@ -29,5 +29,7 @@ export class NPCDespawnSystem {
     for (const key of keysToRemove) {
       npcs.delete(key);
     }
+
+    return keysToRemove;
   }
 }

@@ -1,14 +1,11 @@
 import type { IThreatPolicy, ThreatContext } from '../../interfaces/IThreatPolicy';
 import type { NPCData } from '../../models/NPCDinosaur';
 import { NPCState } from '../../models/NPCState';
-import { DINOSAUR_ROSTER } from '../../models/DinosaurStats';
-import { calculateBiteDamage } from '../../services/DinosaurService';
 
 export class HerbivoreThreatPolicy implements IThreatPolicy {
   threatRadius = 25;
-  packDetectionRadius = 40; // Raio para detectar aliados do mesmo bando
+  packDetectionRadius = 60; // Raio para detectar aliados do mesmo bando
   juvenileLevel = 10; // Filhotes sempre fogem, nunca defendem
-  biteForceDamageThreshold = 1.0; // Defende se herbívoro >= carnívoro (igualdade também defende)
 
   evaluateThreat(npc: NPCData, context: ThreatContext): string | null {
     const { nearbyNPCs, playerPos, playerLevel, playerDiet } = context;
@@ -43,38 +40,32 @@ export class HerbivoreThreatPolicy implements IThreatPolicy {
   }
 
   /**
-   * Determina se um herbívoro deve defender o bando contra um carnívoro.
+   * Determina se um herbívoro deve defender o bando contra um carnívoro NPC.
    * Retorna true se:
-   * - Não é filhote
-   * - Há bando presente (mesma espécie em packDetectionRadius)
-   * - Herbívoro tem força >= carnívoro (ou pequena desvantagem)
+   * - Não é filhote (level >= juvenileLevel)
+   * - Há algum aliado da mesma espécie dentro de packDetectionRadius
+   * Nota: defesa contra player é tratada diretamente no NPCFsmSystem.
    */
   canDefendAgainstThreat(
     npc: NPCData,
     threatId: string,
     allNPCs: NPCData[],
-    npcsById: Map<string, NPCData> | undefined
+    _npcsById: Map<string, NPCData> | undefined
   ): boolean {
+    void _npcsById;
+
     // Filhotes sempre fogem, nunca defendem
     if (npc.level < this.juvenileLevel) {
       return false;
     }
 
-    // Se threatId é player, não temos referência direta (por enquanto, herbívoro não defende contra player)
+    // Ameaça de player é tratada no NPCFsmSystem com lógica própria
     if (threatId === 'player') {
       return false;
     }
 
-    // Obtém o carnívoro atacante
-    const carnivore = npcsById?.get(threatId) || allNPCs.find(n => n.id === threatId);
-    if (!carnivore || carnivore.state === NPCState.Dead) {
-      return false;
-    }
-
-    // Verifica se há bando presente (mesma espécie em packDetectionRadius)
+    // Verifica se há aliado da mesma espécie em packDetectionRadius
     const packRadiusSq = this.packDetectionRadius * this.packDetectionRadius;
-    let hasPackSupport = false;
-
     for (const ally of allNPCs) {
       if (ally.id === npc.id || ally.state === NPCState.Dead) continue;
       if (ally.speciesId !== npc.speciesId) continue;
@@ -82,27 +73,10 @@ export class HerbivoreThreatPolicy implements IThreatPolicy {
       const dx = ally.posX - npc.posX;
       const dz = ally.posZ - npc.posZ;
       if (dx * dx + dz * dz < packRadiusSq) {
-        hasPackSupport = true;
-        break;
+        return true; // Tem suporte de bando — defende!
       }
     }
 
-    if (!hasPackSupport) {
-      return false;
-    }
-
-    // Compara força de mordida
-    const npcStats = DINOSAUR_ROSTER.find(d => d.id === npc.speciesId);
-    const carnivoreStats = DINOSAUR_ROSTER.find(d => d.id === carnivore.speciesId);
-
-    if (!npcStats || !carnivoreStats) {
-      return false;
-    }
-
-    const npcBiteDamage = calculateBiteDamage(npcStats.strength, npc.level);
-    const carnivoreBiteDamage = calculateBiteDamage(carnivoreStats.strength, carnivore.level);
-
-    // Defende se herbívoro tem força >= carnívoro * threshold (igualdade defende)
-    return npcBiteDamage >= carnivoreBiteDamage * this.biteForceDamageThreshold;
+    return false; // Sozinho — foge
   }
 }
