@@ -13,6 +13,8 @@ export const NPCState = {
   Eating: 'Eating',
   /** Executando ataque contra alvo em contato */
   Attacking: 'Attacking',
+  /** Perdeu o alvo de vista — gira 360° tentando reencontrar */
+  Searching: 'Searching',
   /** Morto — deixa carne e aguarda remoção */
   Dead: 'Dead',
 } as const;

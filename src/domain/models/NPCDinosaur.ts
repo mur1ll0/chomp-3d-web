@@ -32,6 +32,10 @@ export interface NPCData {
   retaliatePlayerTimer: number; // Janela de revidar quando for atacado pelo player
   retaliatePlayerPackTimer: number; // Janela de defesa de bando contra agressão do player
 
+  // Searching state (LostSight)
+  searchRotationAngle: number; // Ângulo acumulado de rotação na busca (0 → 2π)
+  searchTargetId: string | null; // ID do alvo que está sendo procurado
+
   // Movement resources
   stamina: number;
   maxStamina: number;
@@ -117,6 +121,8 @@ export function createNPC(
     defendingCarnivoreId: null,
     retaliatePlayerTimer: 0,
     retaliatePlayerPackTimer: 0,
+    searchRotationAngle: 0,
+    searchTargetId: null,
     stamina: 100,
     maxStamina: 100,
     isExhausted: false,

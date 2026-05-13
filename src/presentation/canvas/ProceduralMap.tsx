@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { useAppStore } from '../../store/useAppStore';
 import type { ChunkData } from '../../infrastructure/generation/MapGenerator';
+import { getWorldTime } from '../../infrastructure/system/WorldTime';
 
 interface ProceduralMapProps {
   chunks: ChunkData[];
@@ -160,15 +161,7 @@ export const ProceduralMap: React.FC<ProceduralMapProps> = ({ chunks }) => {
 
   // Efeito de Visibilidade Noturna: Aumenta a emissão conforme o sol se põe
   useFrame(() => {
-    const timeMs = Date.now();
-    const cycleDuration = 300000; 
-    const progress = (timeMs % cycleDuration) / cycleDuration;
-    
-    const theta = progress < 0.8
-      ? (progress / 0.8) * Math.PI
-      : Math.PI + ((progress - 0.8) / 0.2) * Math.PI;
-
-    const sunHeight = Math.sin(theta);
+    const { sunHeight } = getWorldTime();
     
     // Curva de Transição Suave:
     // Começa a surgir quando o sol ainda está alto (0.7) e vai até o fundo da noite (-1.0)

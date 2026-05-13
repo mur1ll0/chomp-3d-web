@@ -1,4 +1,3 @@
-import type { NPCData } from '../../../domain/models/NPCDinosaur';
 import type { Diet } from '../../../domain/models/DinosaurStats';
 import type { WorldObstacle } from '../contracts/IWorldQueryGateway';
 
@@ -13,19 +12,38 @@ export function getNpcPerceptionProfile(diet: Diet): NpcPerceptionProfile {
     return {
       viewDistance: 34,
       eyeHeight: 2.2,
-      halfFovRad: (155 * Math.PI) / 360,
+      halfFovRad: (165 * Math.PI) / 360,
     };
   }
 
   return {
     viewDistance: 38,
     eyeHeight: 2.4,
-    halfFovRad: (120 * Math.PI) / 360,
+    halfFovRad: (150 * Math.PI) / 360,
   };
 }
 
+/**
+ * Verifica se um alvo está atrás do NPC (fora do FOV atual).
+ * Usado para detectar perda de visão durante ataque/perseguição.
+ */
+export function isTargetBehindNpc(
+  npc: { posX: number; posZ: number; rotY: number },
+  targetX: number,
+  targetZ: number,
+  halfFovRad: number
+): boolean {
+  return !isTargetInsideFov(
+    npc,
+    targetX,
+    targetZ,
+    halfFovRad,
+    Infinity
+  );
+}
+
 export function isTargetInsideFov(
-  npc: NPCData,
+  npc: { posX: number; posZ: number; rotY: number },
   targetX: number,
   targetZ: number,
   halfFovRad: number,

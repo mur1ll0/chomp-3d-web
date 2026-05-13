@@ -26,7 +26,7 @@ export class NPCMovementSystem {
   }): void {
     const { npc, stats, strategy, dt, npcsById, worldQuery, obstacles } = args;
 
-    if (npc.state === NPCState.Eating || npc.state === NPCState.Attacking) return;
+    if (npc.state === NPCState.Eating || npc.state === NPCState.Attacking || npc.state === NPCState.Searching) return;
     npc.jumpCooldown = Math.max(0, npc.jumpCooldown - dt);
 
     const dx = npc.targetX - npc.posX;

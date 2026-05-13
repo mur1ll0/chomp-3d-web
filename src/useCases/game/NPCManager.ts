@@ -127,6 +127,8 @@ class NPCManagerClass {
         yVelocity: npc.yVelocity ?? 0,
         isGrounded: npc.isGrounded ?? true,
         jumpCooldown: npc.jumpCooldown ?? 0,
+        searchRotationAngle: npc.searchRotationAngle ?? 0,
+        searchTargetId: npc.searchTargetId ?? null,
       });
     }
   }
@@ -277,15 +279,20 @@ class NPCManagerClass {
 
       if (npc.stateTimer > 0) {
         if (npc.stateTimer <= dt) {
-          if (npc.state === NPCState.Eating || npc.state === NPCState.Attacking) {
+          if (npc.state === NPCState.Eating) {
             npc.state = NPCState.Wandering;
             npc.animationIntent = 'Idle';
             npc.stateTimer = 0;
-            // Garante transição de estado entre ações one-shot e evita
-            // reentrada no mesmo tick que impede o replay da animação.
             continue;
           }
-          npc.stateTimer = 0;
+          if (npc.state === NPCState.Attacking) {
+            // Timer expirou — não força Wandering; o FSM decide
+            // se retoma perseguição (alvo visível), busca (perdeu vista)
+            // ou vagueia (sem alvo).
+            npc.stateTimer = 0;
+          } else {
+            npc.stateTimer = 0;
+          }
         } else if (npc.state === NPCState.Eating || npc.state === NPCState.Attacking) {
           continue;
         }

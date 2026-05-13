@@ -120,6 +120,114 @@ export class NPCFsmSystem {
     }
     const visibleEdibles = this.visibleEdiblesBuffer;
 
+    // ── Attacking finished: decide next state based on target visibility ──
+    if (npc.state === NPCState.Attacking && npc.stateTimer <= 0) {
+      if (npc.huntingTargetId) {
+        const isTargetPlayer = npc.huntingTargetId === 'player';
+        let targetStillVisible = false;
+
+        if (isTargetPlayer) {
+          targetStillVisible = playerVisible;
+        } else {
+          const targetNpc = npcsById.get(npc.huntingTargetId);
+          if (targetNpc && targetNpc.state !== NPCState.Dead) {
+            targetStillVisible = isTargetInsideFov(
+              npc,
+              targetNpc.posX,
+              targetNpc.posZ,
+              perceptionProfile.halfFovRad,
+              perceptionProfile.viewDistance
+            ) && !isLineOfSightBlocked(
+              npc.posX, npcEyeY, npc.posZ,
+              targetNpc.posX,
+              targetNpc.posY + (DINOSAUR_ROSTER.find(d => d.id === targetNpc.speciesId)?.collisionHeight ?? 1) * 0.45 * getNPCScaleFactor(targetNpc.level, DINOSAUR_ROSTER.find(d => d.id === targetNpc.speciesId) ?? DINOSAUR_ROSTER[0]),
+              targetNpc.posZ,
+              obstacles
+            );
+          }
+        }
+
+        if (targetStillVisible) {
+          // Alvo ainda visível — retoma perseguição
+          npc.state = NPCState.Hunting;
+          npc.animationIntent = 'Run';
+          npc.targetX = isTargetPlayer ? playerPos.x : (npcsById.get(npc.huntingTargetId)?.posX ?? npc.targetX);
+          npc.targetZ = isTargetPlayer ? playerPos.z : (npcsById.get(npc.huntingTargetId)?.posZ ?? npc.targetZ);
+        } else {
+          // Perdeu de vista ao finalizar o ataque — entra em busca
+          npc.state = NPCState.Searching;
+          npc.searchRotationAngle = 0;
+          npc.searchTargetId = npc.huntingTargetId;
+          npc.huntingTargetId = null;
+          npc.animationIntent = 'Idle';
+        }
+      } else {
+        // Sem alvo definido — retorna ao estado de vagueio
+        npc.state = NPCState.Wandering;
+        npc.animationIntent = 'Idle';
+      }
+      npc.stateTimer = 0;
+    }
+
+    // ── Searching state (LostSight): NPC perdeu o alvo de vista e gira 360° procurando ──
+    if (npc.state === NPCState.Searching) {
+      const SEARCH_ROTATION_SPEED = 2.5; // rad/s — 360° em ~2.5s
+      npc.searchRotationAngle += SEARCH_ROTATION_SPEED * dt;
+      npc.rotY += SEARCH_ROTATION_SPEED * dt;
+      npc.animationIntent = 'Idle';
+
+      if (npc.searchTargetId) {
+        const isSearchingForPlayer = npc.searchTargetId === 'player';
+        let targetVisible = false;
+
+        if (isSearchingForPlayer) {
+          targetVisible = playerVisible;
+        } else {
+          const targetNpc = npcsById.get(npc.searchTargetId);
+          if (targetNpc && targetNpc.state !== NPCState.Dead) {
+            targetVisible = isTargetInsideFov(
+              npc,
+              targetNpc.posX,
+              targetNpc.posZ,
+              perceptionProfile.halfFovRad,
+              perceptionProfile.viewDistance
+            ) && !isLineOfSightBlocked(
+              npc.posX, npcEyeY, npc.posZ,
+              targetNpc.posX,
+              targetNpc.posY + (DINOSAUR_ROSTER.find(d => d.id === targetNpc.speciesId)?.collisionHeight ?? 1) * 0.45 * getNPCScaleFactor(targetNpc.level, DINOSAUR_ROSTER.find(d => d.id === targetNpc.speciesId) ?? DINOSAUR_ROSTER[0]),
+              targetNpc.posZ,
+              obstacles
+            );
+          }
+        }
+
+        if (targetVisible) {
+          // Reencontrou o alvo — retoma perseguição
+          npc.state = NPCState.Hunting;
+          npc.huntingTargetId = npc.searchTargetId;
+          npc.targetX = isSearchingForPlayer ? playerPos.x : (npcsById.get(npc.searchTargetId)?.posX ?? npc.targetX);
+          npc.targetZ = isSearchingForPlayer ? playerPos.z : (npcsById.get(npc.searchTargetId)?.posZ ?? npc.targetZ);
+          npc.animationIntent = 'Run';
+          npc.searchRotationAngle = 0;
+          npc.searchTargetId = null;
+        } else if (npc.searchRotationAngle >= Math.PI * 2) {
+          // Varredura completa sem encontrar — desiste
+          npc.searchRotationAngle = 0;
+          npc.searchTargetId = null;
+          npc.state = NPCState.Wandering;
+          npc.animationIntent = 'Idle';
+          npc.wanderTimer = 0;
+          return;
+        }
+      } else {
+        // Sem targetId definido — não há o que procurar
+        npc.searchRotationAngle = 0;
+        npc.state = NPCState.Wandering;
+        npc.animationIntent = 'Idle';
+      }
+      return; // Searching state é exclusivo — não entra nos blocos abaixo
+    }
+
     // Propaga revide de bando antes da lógica de ameaça para evitar fuga prematura.
     if (npc.diet === 'Herbivore' && npc.retaliatePlayerPackTimer <= 0) {
       const packRadiusSq = this.herbivorePackDetectionRadius * this.herbivorePackDetectionRadius;

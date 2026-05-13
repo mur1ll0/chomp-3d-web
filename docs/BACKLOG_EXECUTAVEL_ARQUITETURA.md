@@ -240,6 +240,50 @@ Criterio de aceite:
 Status:
 - [OK] Implementado em 2026-05-12 com selector especifico de currentScreen em App.
 
+### E4.4 Implementar estado Searching (LostSight) na FSM de NPCs [OK]
+Arquivos:
+- [src/domain/models/NPCState.ts](../src/domain/models/NPCState.ts)
+- [src/domain/models/NPCDinosaur.ts](../src/domain/models/NPCDinosaur.ts)
+- [src/useCases/game/systems/NPCFsmSystem.ts](../src/useCases/game/systems/NPCFsmSystem.ts)
+- [src/useCases/game/systems/NPCMovementSystem.ts](../src/useCases/game/systems/NPCMovementSystem.ts)
+- [src/useCases/game/NPCManager.ts](../src/useCases/game/NPCManager.ts)
+- [src/useCases/game/systems/NPCPerceptionUtils.ts](../src/useCases/game/systems/NPCPerceptionUtils.ts)
+
+Alterar:
+- Adicionar estado `Searching` no NPCState.
+- Adicionar campos `searchRotationAngle` e `searchTargetId` no NPCData.
+- Quando o timer de Attacking expira e o alvo não está mais visível (FOV + LOS), NPC entra em Searching.
+- No estado Searching, o NPC gira 360° em ~2.5s procurando o alvo perdido.
+- Se reencontrar o alvo, retoma Hunting/Attacking.
+- Se não encontrar após a varredura completa, volta a Wandering.
+- Aumentar o FOV dos NPCs: Carnívoros de 120° → 150°, Herbívoros de 155° → 165°.
+- Adicionar função utilitária `isTargetBehindNpc` no NPCPerceptionUtils.
+
+Criterio de aceite:
+- NPC perde o alvo durante ataque → gira procurando → reencontra ou desiste.
+- FOV mais largo permite visão lateral sem depender apenas do frontal.
+
+Status:
+- [OK] Implementado em 2026-05-13 com estados Searching, rotação 360°, FOV ampliado e detecção de perda de visão ao final do ataque.
+
+### E4.5 Otimizar desempenho: cache de tempo global do mundo [OK]
+Arquivos:
+- [src/infrastructure/system/WorldTime.ts](../src/infrastructure/system/WorldTime.ts) (novo)
+- [src/presentation/canvas/ProceduralMap.tsx](../src/presentation/canvas/ProceduralMap.tsx)
+- [src/presentation/canvas/DynamicEnvironment.tsx](../src/presentation/canvas/DynamicEnvironment.tsx)
+
+Alterar:
+- Extrair cálculo de ciclo dia/noite para módulo compartilhado `WorldTime.ts` com cache de 100ms.
+- Ambos ProceduralMap e DynamicEnvironment consultam o mesmo snapshot.
+- Evitar chamadas duplicadas de `Date.now()` por frame (antes eram 2 por frame).
+
+Criterio de aceite:
+- `Date.now()` chamado no máximo uma vez a cada 100ms, não mais 2x/frame.
+- Ciclo dia/noite mantém coerência visual.
+
+Status:
+- [OK] Implementado em 2026-05-13 com WorldTime compartilhado e cache de 100ms.
+
 ## E5 - Fundacao de multiplayer PeerJS (apos E1-E3)
 
 ### E5.1 Camada de rede host/client
