@@ -1,9 +1,10 @@
 import { create } from 'zustand';
 
 export type Screen = 'menu' | 'character-select' | 'settings' | 'game' | 'session-select';
-export type GameMode = 'online' | 'offline' | null;
+export type GameMode = 'single' | 'party' | 'global' | 'online' | 'offline' | null;
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
 export type OnlineRole = 'host' | 'client' | null;
+export type SignalingStatus = 'online' | 'offline' | 'checking';
 
 export type ControlAction =
   | 'moveForward'
@@ -104,12 +105,17 @@ interface AppState {
 
   // Multiplayer State
   sessionCode: string;
+  packCode: string;
   connectionStatus: ConnectionStatus;
   onlineRole: OnlineRole;
   connectedPlayers: string[];
   networkNPCs: unknown[];
   networkPlayers: unknown[];
   networkTick: number;
+
+  // Phase 6 — New Network State
+  signalingStatus: SignalingStatus;
+  globalPlayerCount: number;
 
   // Actions
   setScreen: (screen: Screen) => void;
@@ -146,6 +152,11 @@ interface AppState {
   setOnlineRole: (role: OnlineRole) => void;
   setConnectedPlayers: (players: string[]) => void;
   setNetworkData: (npcs: unknown[], players: unknown[], tick: number, edibleStates?: Record<string, number>) => void;
+
+  // Phase 6 Actions
+  setPackCode: (code: string) => void;
+  setSignalingStatus: (status: SignalingStatus) => void;
+  setGlobalPlayerCount: (count: number) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -185,12 +196,17 @@ export const useAppStore = create<AppState>((set) => ({
 
   // Multiplayer
   sessionCode: '',
+  packCode: '',
   connectionStatus: 'disconnected',
   onlineRole: null,
   connectedPlayers: [],
   networkNPCs: [],
   networkPlayers: [],
   networkTick: 0,
+
+  // Phase 6
+  signalingStatus: 'checking',
+  globalPlayerCount: 0,
 
   setScreen: (screen) => set({ currentScreen: screen }),
   setGameMode: (mode) => set({ gameMode: mode }),
@@ -415,9 +431,12 @@ export const useAppStore = create<AppState>((set) => ({
   setLevel: (level) => set({ level: Math.max(1, level) }),
   setDebugZoomUnlocked: (v) => set({ debugZoomUnlocked: v }),
   setSessionCode: (code) => set({ sessionCode: code }),
+  setPackCode: (code) => set({ packCode: code }),
   setConnectionStatus: (status) => set({ connectionStatus: status }),
   setOnlineRole: (role) => set({ onlineRole: role }),
   setConnectedPlayers: (players) => set({ connectedPlayers: players }),
+  setSignalingStatus: (status) => set({ signalingStatus: status }),
+  setGlobalPlayerCount: (count) => set({ globalPlayerCount: count }),
   setNetworkData: (npcs, players, tick, edibleStates) => set((state) => {
     const update: Partial<AppState> = { networkNPCs: npcs, networkPlayers: players, networkTick: tick };
     if (edibleStates) {

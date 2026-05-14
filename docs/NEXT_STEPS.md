@@ -241,9 +241,9 @@ Exceto: se o NPC atacou o player A (evento gerado), o NPC entra em cooldown de a
 
 ### 6.2 — ChunkInterestManager
 
-**O quê**: Gerenciar quais peers são relevantes para o jogador baseado em chunks do mapa. Determina conexões P2P e filtragem de eventos.
+**O quê**: Gerenciar quais peers são relevantes para o jogador baseado em chunks do mapa e na distância de renderização configurada. Determina conexões P2P e filtragem de eventos.
 
-**Por quê**: Em uma mesh global, não podemos nos conectar a todos. Só peers no mesmo chunk ou adjacente (distância máxima 1 chunk = 50 unidades) são relevantes para sincronização.
+**Por quê**: Em uma mesh global, não podemos nos conectar a todos. A área de interesse deve corresponder ao que o jogador vê na tela — se o `renderDistance` está configurado para 5 chunks, o jogador espera ver e interagir com peers a até 5 chunks de distância. Usar o render distance garante fidelidade visual: o ambiente de rede reflete exatamente o ambiente renderizado.
 
 | Arquivo | Ação |
 |---------|------|
@@ -260,8 +260,9 @@ interface ChunkPos { x: number; z: number; }
 
 class ChunkInterestManager {
   private _playerChunk: ChunkPos;
-  private _interestRadius: number;  // default: 1 (chunks adjacentes)
-  private _peerChunks: Map<string, ChunkPos>;  // peerId → chunk
+  private _interestRadius: number;  // sincronizado com renderDistance do store
+  private _maxConnections: number;  // hard cap: 30 conexões simultâneas
+  private _peerChunks: Map<string, ChunkPos & { renderDistance: number }>;
 
   setPlayerPosition(worldX: number, worldZ: number): ChunkPos
   // Retorna o chunk atual (atualiza se mudou)
@@ -293,9 +294,35 @@ class ChunkInterestManager {
   2. Conectar a novos peers que entraram no interest zone
   3. Enviar `player_chunk` event para peers ainda conectados
 
-**Interesse radial**: `interestRadius = 1` significa que consideramos 9 chunks (3×3 centrado no jogador). Para chunks de 50 unidades, isso cobre 150×150 unidades de área de interesse. Ajustável via configuração.
+**Interesse radial**: O raio é definido pelo `renderDistance` do store (configurável de 1 a 6, default 2). `interestRadius = renderDistance` significa que consideramos chunks num grid `(2*renderDistance+1)²`. Exemplos:
+- renderDistance=1: 3×3 = 9 chunks (150×150 unidades)
+- renderDistance=2: 5×5 = 25 chunks (250×250 unidades) — **default**
+- renderDistance=5: 11×11 = 121 chunks (550×550 unidades)
+- renderDistance=6: 13×13 = 169 chunks (650×650 unidades)
 
-**Eficiência**: Operações O(1) para `updatePeerChunk` e `getPeersInInterestZone` (usa hash maps). A lista de peers no interest zone é pequena (tipicamente 0-5 peers).
+**Hard cap de conexões**: `maxConnections = 30`. Se houver mais de 30 peers no interest zone, conecta apenas aos 30 mais próximos (ordenados por distância euclidiana de chunk). Isso evita sobrecarga de WebRTC.
+
+**Atualização dinâmica**: Toda vez que o jogador muda o `renderDistance` no menu de configurações, `ChunkInterestManager.updateInterestRadius()` recalcula o interest zone e PeerMesh reconecta conforme necessário.
+
+**Algoritmo de conexão bidirecional** (ver 6.14):
+```typescript
+// Peer A se conecta ao Peer B se B estiver no interest zone de A.
+// Como a conexão é simétrica (WebRTC DataChannel), uma vez conectados
+// ambos enviam/recebem eventos normalmente.
+// Peer com maior renderDistance naturalmente "puxa" conexões com peers
+// mais distantes, garantindo que jogadores com visão ampla vejam tudo.
+
+function shouldConnectToPeer(peerChunk: ChunkPos, peerRenderDist: number): boolean {
+  // Conecta SE o peer está no MEU interest zone OU
+  // SE eu estou no interest zone do peer (conexão mútua)
+  const dist = chunkDistance(this._playerChunk, peerChunk);
+  const myInterest = dist <= this._interestRadius;
+  const theirInterest = dist <= peerRenderDist;
+  return myInterest || theirInterest;
+}
+```
+
+**Eficiência**: Operações O(1) para `updatePeerChunk` e `getPeersInInterestZone` (usa hash maps). A ordenação para o hard cap de 30 peers é O(n log n) mas n é tipicamente < 50, irrelevante.
 
 ---
 
@@ -830,68 +857,7 @@ removeRemotePlayer(peerId: string): void;
 
 ---
 
-### 6.10 — Ordem de Implementação (Sprints)
-
-**Dependências entre tarefas**:
-```
-6.1 (NPCManager determinístico)
-  ├── 6.1.1 EventBus
-  ├── 6.1.2 NPCManager refactor
-  └── 6.1.3 NPCFsmSystem deterministic decisions
-
-6.2 ChunkInterestManager (independente, paralelo a 6.1)
-  └── usado por 6.3 e 6.5
-
-6.3 PeerMesh (depende de 6.1 e 6.2)
-  ├── 6.3.1 Party mode
-  └── 6.3.2 Global mode (depende de 6.4)
-
-6.4 Signaling Server (independente, paralelo a 6.1/6.2/6.3)
-
-6.5 EventReplicator (depende de 6.1 e 6.3)
-
-6.6 Player Sync (depende de 6.3)
-
-6.7 UI (depende de 6.3, parcialmente independente)
-
-6.8 Store cleanup (feito durante 6.7, mas planejado antes)
-
-6.9 Remover arquivos legados (final)
-```
-
-**Sprint 1 — Fundação**:
-1. `EventBus.ts` — estrutura pura, sem dependências de rede
-2. `NPCManager.ts` — refatorar para consumir EventBus
-3. `NPCFsmSystem.ts` — converter decisões de player-relative para chunk-relative
-4. `ChunkInterestManager.ts` — módulo puro, sem dependências de rede
-5. Testar: single player continua funcionando (modo determinístico desligado)
-
-**Sprint 2 — PeerMesh (Modo Party)**:
-1. `PeerMesh.ts` — estrutura básica com `startParty()`
-2. Conexão entre múltiplos peers no mesmo party
-3. Heartbeat + detecção de desconexão
-4. `EventReplicator.ts` — replicação de eventos entre peers do party
-5. Testar: 2 peers no party, NPCs sincronizados via eventos
-
-**Sprint 3 — Signaling Server + Modo Global**:
-1. `server/signaling-server.ts` — WebSocket server básico
-2. `SignalingClient.ts` — cliente WebSocket
-3. `PeerMesh.startGlobal()` — mesh parcial
-4. Integração ChunkInterest → PeerMesh (conexão seletiva)
-5. Testar: 3 peers em chunks diferentes → só conectam quando entram no mesmo chunk
-
-**Sprint 4 — UI + Finalização**:
-1. `SessionSelectScreen.tsx` — 3 modos
-2. `CharacterSelectionMenu.tsx` — modo-aware
-3. `BandPanel.tsx` — global/party info
-4. `GameScreen.tsx` — remover host transfer
-5. `useAppStore.ts` — novo estado de rede
-6. Remover arquivos legados
-7. Testar: todos os 3 modos funcionando em integração
-
----
-
-### 6.11 — Riscos e Mitigações
+### 6.10 — Riscos e Mitigações
 
 | Risco | Probabilidade | Impacto | Mitigação |
 |-------|:---:|:---:|-----------|
@@ -905,7 +871,7 @@ removeRemotePlayer(peerId: string): void;
 
 ---
 
-### 6.12 — Métricas de Sucesso
+### 6.11 — Métricas de Sucesso
 
 1. **Zero snapshots de NPC na rede**: NPCs só sincronizam via eventos. Verificar com Wireshark/devtools que `SnapshotMessage` não é mais enviado.
 2. **Determinismo**: Dois peers no mesmo chunk com os mesmos eventos exibem NPCs nas mesmas posições (±0.01 unidades).
@@ -913,3 +879,545 @@ removeRemotePlayer(peerId: string): void;
 4. **Performance**: Modo Global com 5 peers no interest zone não aumenta CPU em mais de 15% comparado ao single player.
 5. **Migração suave**: Party Mode usando PeerMesh deve ser drop-in replacement para a funcionalidade atual de Host-Client.
 6. **Reconexão**: Peer que cai e volta recupera eventos perdidos e converge estado em < 2 segundos.
+
+---
+
+### 6.12 — Spawn Determinístico do Jogador Próximo a Packs
+
+**O quê**: Em vez de sempre spawnar em `(0, 0, 0)`, o jogador spawna próximo a um grupo (pack) de NPCs da sua própria espécie que esteja longe de predadores. A posição é completamente determinística: mesma espécie + mesma seed = mesma posição de spawn.
+
+**Por quê**: Imersão e coerência — o jogador aparece no mundo como se fizesse parte de um bando. Além disso, a posição determinística significa que em modo Party/Global, dois jogadores da mesma espécie spawnam no mesmo pack e se veem imediatamente.
+
+| Arquivo | Ação |
+|---------|------|
+| `src/useCases/game/SpawnResolver.ts` | **CRIAR** |
+| `src/presentation/canvas/PlayerDinosaur.tsx` | MODIFICAR |
+| `src/useCases/game/NPCManager.ts` | MODIFICAR |
+
+#### 6.12.1 — SpawnResolver.ts (NOVO)
+
+```
+src/useCases/game/SpawnResolver.ts
+```
+
+**Responsabilidade**: Dado um `speciesId` e `WORLD_SEED`, encontrar deterministicamente a melhor posição de spawn — próxima a um pack da mesma espécie e longe de predadores.
+
+**Lógica**:
+```typescript
+const CHUNK_SIZE = 50;
+const SEARCH_RADIUS = 15;   // concentric rings até 15 chunks do centro
+const CARNIVORE_CHECK_RADIUS = 2;  // checar 2 chunks ao redor por predadores
+const WATER_CHECK_RESOLUTION = 5;  // samples de água na área
+
+interface SpawnPosition {
+  chunkX: number;
+  chunkZ: number;
+  worldX: number;
+  worldZ: number;
+}
+
+class SpawnResolver {
+  constructor(private worldSeed: number) {}
+
+  resolve(speciesId: string, herbivoreRoster: string[]): SpawnPosition {
+    // Busca em anéis concêntricos (chunks mais próximos primeiro)
+    for (let radius = 1; radius <= SEARCH_RADIUS; radius++) {
+      for (let cx = -radius; cx <= radius; cx++) {
+        for (let cz = -radius; cz <= radius; cz++) {
+          // Pula chunks internos (já processados em raios menores)
+          if (Math.abs(cx) !== radius && Math.abs(cz) !== radius) continue;
+
+          const pos = this.evaluateChunk(cx, cz, speciesId, herbivoreRoster);
+          if (pos) return pos;
+        }
+      }
+    }
+    // Fallback: origem
+    return { chunkX: 0, chunkZ: 0, worldX: 0, worldZ: 0 };
+  }
+
+  private evaluateChunk(
+    cx: number, cz: number,
+    speciesId: string,
+    herbivoreRoster: string[]
+  ): SpawnPosition | null {
+    const herbCount = Math.floor(seededRandom(cx, cz, 100) * 3) + 1; // 1-3 grupos
+
+    for (let g = 0; g < herbCount; g++) {
+      // Determina espécie deste grupo (determinístico)
+      const speciesIdx = Math.floor(
+        seededRandom(cx + g, cz + g, 200) * herbivoreRoster.length
+      );
+      if (herbivoreRoster[speciesIdx] !== speciesId) continue;
+
+      // Calcula centro do grupo (determinístico)
+      const groupCenterX = cx * CHUNK_SIZE + seededRandom(cx + g, cz, 150) * CHUNK_SIZE;
+      const groupCenterZ = cz * CHUNK_SIZE + seededRandom(cx, cz + g, 150) * CHUNK_SIZE;
+
+      // Verifica água na área
+      if (this.isAreaWater(groupCenterX, groupCenterZ)) continue;
+
+      // Verifica predadores nas redondezas
+      if (this.hasCarnivoreNearby(cx, cz)) continue;
+
+      return {
+        chunkX: cx,
+        chunkZ: cz,
+        worldX: groupCenterX + (seededRandom(cx, cz, 999) - 0.5) * 5,
+        worldZ: groupCenterZ + (seededRandom(cx, cz, 888) - 0.5) * 5,
+      };
+    }
+
+    return null; // Nenhum grupo da espécie neste chunk
+  }
+
+  private hasCarnivoreNearby(cx: number, cz: number): boolean {
+    for (let dx = -CARNIVORE_CHECK_RADIUS; dx <= CARNIVORE_CHECK_RADIUS; dx++) {
+      for (let dz = -CARNIVORE_CHECK_RADIUS; dz <= CARNIVORE_CHECK_RADIUS; dz++) {
+        // 30% de chance por chunk de ter carnívoro
+        if (seededRandom(cx + dx, cz + dz, 500) < 0.3) return true;
+      }
+    }
+    return false;
+  }
+
+  private isAreaWater(worldX: number, worldZ: number): boolean {
+    // Samples em grid 5×5 ao redor do ponto
+    for (let dx = -WATER_CHECK_RESOLUTION; dx <= WATER_CHECK_RESOLUTION; dx += 2) {
+      for (let dz = -WATER_CHECK_RESOLUTION; dz <= WATER_CHECK_RESOLUTION; dz += 2) {
+        // Usa o mesmo noise do MapGenerator
+        const waterNoise = createNoise2D(() => 98765);
+        if (getWaterValue(worldX + dx, worldZ + dz) > WATER_THRESHOLD) return true;
+      }
+    }
+    return false;
+  }
+}
+```
+
+**SeededRandom idêntico ao NPCSpawnSystem**: Usar exatamente a mesma função `seededRandom(x, z, salt)` para produzir os mesmos resultados. Isso garante que o spawn escolhido corresponda a um pack que REALMENTE existe no jogo.
+
+**Performance**: A busca em anéis concêntricos encontra um resultado tipicamente no raio 1-3 (primeiros anéis). No pior caso (espécie rara, muitos predadores), leva ~200 iterações — ainda assim < 1ms porque é só aritmética.
+
+**Posição exata do jogador**: O centro do grupo é ajustado com `±5 unidades` de jitter (determinístico) para evitar que múltiplos jogadores spawnem exatamente na mesma coordenada.
+
+#### 6.12.2 — PlayerDinosaur.tsx — Usar SpawnResolver
+
+**Mudanças**:
+1. Na montagem do componente (`useLayoutEffect` ou `useEffect` inicial), chamar `SpawnResolver.resolve(speciesId, herbivoreRoster)` para obter a posição de spawn
+2. Modificar o `<group position={[0, 0, 0]}>` para usar a posição resolvida:
+   ```typescript
+   const spawnPos = useRef<SpawnPosition>({ worldX: 0, worldY: 0, worldZ: 0 });
+   
+   useLayoutEffect(() => {
+     if (gameMode === 'single' || gameMode === 'global') {
+       const pos = SpawnResolver.resolve(playerSpecies, HERBIVORE_ROSTER);
+       spawnPos.current = { worldX: pos.worldX, worldY: 0, worldZ: pos.worldZ };
+       playerRef.current?.position.set(pos.worldX, 0, pos.worldZ);
+     }
+     // Em Party: spawn position pode vir do pack code (ver 6.13)
+   }, []);
+   ```
+3. A câmera (`useFrame`) deve seguir a posição do grupo, que já acontece naturalmente pois a câmera segue o `playerRef`
+
+**IMPORTANTE**: A primeira chamada de `NPCManager.update()` captura `playerSpawnX/Z` e usa para exclusion radius (40 unidades). Se o jogador spawna em uma posição diferente de `(0,0)`, o exclusion radius se move junto — sem problemas.
+
+#### 6.12.3 — Integração com Modos de Jogo
+
+| Modo | Spawn |
+|------|-------|
+| Single | `SpawnResolver.resolve(speciesId)` → spawn próximo ao pack da espécie |
+| Party (sem pack code) | `SpawnResolver.resolve(speciesId)` → todos no party spawnam perto do mesmo pack |
+| Party (com pack code) | Posição do pack code (ver 6.13) |
+| Global (sem pack code) | `SpawnResolver.resolve(speciesId)` |
+| Global (com pack code) | Posição do pack code (ver 6.13) |
+
+---
+
+### 6.13 — Sistema de Código de Pack (Pack Code)
+
+**O quê**: Na tela de seleção de dinossauro, o jogador pode opcionalmente informar um "código de pack" para spawnar próximo a um grupo específico. O código codifica `(species, chunkX, chunkZ)` — qualquer jogador com o mesmo código spawna no mesmo pack.
+
+**Por quê**: Amigos querem cair juntos no mesmo grupo ao entrar no mesmo mundo Party/Global. O pack code serve como "ponto de encontro" determinístico.
+
+| Arquivo | Ação |
+|---------|------|
+| `src/useCases/game/PackCodec.ts` | **CRIAR** |
+| `src/presentation/screens/CharacterSelectionMenu.tsx` | MODIFICAR |
+| `src/presentation/canvas/PlayerDinosaur.tsx` | MODIFICAR |
+| `src/store/useAppStore.ts` | MODIFICAR |
+
+#### 6.13.1 — PackCodec.ts (NOVO)
+
+```
+src/useCases/game/PackCodec.ts
+```
+
+**Formato do código**: `{ESPÉCIE}-{CX}x{CZ}` — legível por humanos, fácil de copiar.
+
+Exemplos:
+- `TRIC-3x5` → Triceratops, chunk (3, 5)
+- `RAPT-0x0` → Velociraptor, chunk (0, 0)
+- `APAT--2x4` → Apatossauro, chunk (-2, 4)
+
+```typescript
+const SPECIES_SHORT: Record<string, string> = {
+  'TRex': 'TREX',
+  'Velociraptor': 'RAPT',
+  'Triceratops': 'TRIC',
+  'Stegosaurus': 'STEG',
+  'Parasaurolophus': 'PARA',
+  'Apatosaurus': 'APAT',
+};
+
+const SHORT_TO_SPECIES: Record<string, string> = { /* inverso */ };
+
+class PackCodec {
+  static encode(speciesId: string, chunkX: number, chunkZ: number): string {
+    const short = SPECIES_SHORT[speciesId] ?? speciesId.slice(0, 4).toUpperCase();
+    return `${short}-${chunkX}x${chunkZ}`;
+  }
+
+  static decode(code: string): { speciesId: string; chunkX: number; chunkZ: number } | null {
+    const match = code.toUpperCase().match(/^([A-Z]{3,5})-(-?\d+)x(-?\d+)$/);
+    if (!match) return null;
+    const [, short, cxStr, czStr] = match;
+    const speciesId = SHORT_TO_SPECIES[short];
+    if (!speciesId) return null;
+    return {
+      speciesId,
+      chunkX: parseInt(cxStr, 10),
+      chunkZ: parseInt(czStr, 10),
+    };
+  }
+
+  /** Gera um código de pack para o jogador baseado no chunk onde ele spawnou */
+  static fromSpawnPosition(speciesId: string, spawn: SpawnPosition): string {
+    return PackCodec.encode(speciesId, spawn.chunkX, spawn.chunkZ);
+  }
+}
+```
+
+**Validação**:
+- `decode()` retorna `null` para códigos mal formatados
+- UI mostra erro se código inválido
+- O código pode ser gerado automaticamente ao criar um Party ("Compartilhe o código do pack com seus amigos: TRIC-3x5")
+- O pack code aparece no BandPanel durante o jogo para ser copiado
+
+#### 6.13.2 — CharacterSelectionMenu.tsx — Campo de Pack Code
+
+**Novo campo na UI**:
+```
+┌──────────────────────────────────────┐
+│  Nome: [___________________]         │
+│  Dinossauro: [Triceratops ▼]         │
+│                                      │
+│  Código do Pack: (opcional)          │
+│  [___________________]               │
+│  │ Compartilhe este código com       │
+│  │ amigos para cair junto!           │
+│  │ Gerar código do meu pack │        │
+│                                      │
+│  Seu código de pack (seu grupo):     │
+│  TRIC-3x5  [Copiar]                  │
+│                                      │
+│  [INICIAR PARTIDA]                   │
+└──────────────────────────────────────┘
+```
+
+**Comportamento**:
+- **Campo opcional**: se vazio, usa `SpawnResolver.resolve(speciesId)` normalmente
+- **Campo preenchido**: valida com `PackCodec.decode()`. Se válido, usa `(species, chunkX, chunkZ)` como posição de spawn. Se inválido, mostra erro.
+- **Botão "Gerar código do meu pack"**: calcula o spawn para a espécie selecionada e preenche o campo com o código — útil para compartilhar com amigos
+- **Seu código de pack**: mostra o código do pack onde o jogador VAI spawnar (calculado deterministicamente antes mesmo de entrar no jogo), com botão copiar
+- Em **Modo Party**: o código do pack é gerado automaticamente baseado na espécie do host. Todos que entrarem na sala são redirecionados para o mesmo pack.
+- Em **Modo Global**: o código do pack pode ser compartilhado via chat externo (Discord, etc.)
+
+#### 6.13.3 — PlayerDinosaur.tsx — Spawn por Pack Code
+
+**Lógica de posição inicial**:
+```typescript
+function getInitialSpawnPosition(gameMode, speciesId, packCode): SpawnPosition {
+  if (packCode) {
+    const decoded = PackCodec.decode(packCode);
+    if (decoded && decoded.speciesId === speciesId) {
+      // Spawn no centro do chunk especificado, com leve jitter
+      return {
+        chunkX: decoded.chunkX,
+        chunkZ: decoded.chunkZ,
+        worldX: decoded.chunkX * CHUNK_SIZE + CHUNK_SIZE / 2,
+        worldZ: decoded.chunkZ * CHUNK_SIZE + CHUNK_SIZE / 2,
+      };
+    }
+  }
+  // Fallback: spawn determinístico
+  return SpawnResolver.resolve(speciesId, HERBIVORE_ROSTER);
+}
+```
+
+**IMPORTANTE**: O `packCode` é validado na tela de seleção, então ao chegar no jogo ele já é conhecido como válido. A posição `worldX, worldZ` é calculada como o centro do chunk + jitter para evitar overlap exato entre jogadores.
+
+#### 6.13.4 — Integração com o Store
+
+```typescript
+// useAppStore.ts — novos campos
+packCode: string;  // código do pack para spawn (opcional, '')
+setPackCode(code: string): void;
+```
+
+---
+
+### 6.14 — Interest Zone Adaptativo por Render Distance
+
+**O quê**: A área de interesse para sincronização P2P (quem conectar, com quem trocar eventos) deve usar o `renderDistance` configurado pelo jogador, em vez de um valor fixo. O ambiente de rede reflete exatamente o ambiente renderizado.
+
+**Por quê**: Um jogador com `renderDistance=5` vê 121 chunks e espera ver NPCs/jogadores sincronizados nessa área toda. Usar o mesmo raio da renderização garante consistência visual sem configuração extra.
+
+**Já integrado em 6.2** — esta seção detalha a integração completa.
+
+#### 6.14.1 — Fluxo de Conexão com Render Distance
+
+```
+1. Usuário configura renderDistance no menu (slider 1-6, default 2)
+   → store.setRenderDistance(valor)
+
+2. Ao entrar no Modo Global:
+   → SignalingClient.sendJoin(peerId, playerName, dinoId, colors, renderDistance)
+   → Servidor armazena peer com seu renderDistance
+   → Servidor envia peer_list com { chunkX, chunkZ, renderDistance } para cada peer
+
+3. PeerMesh.startGlobal() → para cada peer na peer_list:
+   → Calcula chunkDistance(playerChunk, peerChunk)
+   → Se distância <= player.renderDistance OU distância <= peer.renderDistance:
+     → connectToPeer(peerId)  // conexão bidirecional
+   → Se mais de 30 peers elegíveis: ordenar por distância, conectar os 30 mais próximos
+
+4. Quando renderDistance muda (usuário altera slider):
+   → ChunkInterestManager.updateInterestRadius()
+   → PeerMesh.reconcileConnections()  // desconecta peers que saíram, conecta novos
+
+5. PeerMesh também envia o renderDistance atual no heartbeat:
+   { type: 'heartbeat', chunkX, chunkZ, tick, renderDistance }
+   → Permite que peers remotos recalculem se devem manter conexão
+```
+
+#### 6.14.2 — Signaling Server — Novo Campo renderDistance
+
+**Mudanças**:
+```typescript
+// Estado do servidor
+interface ConnectedPeer {
+  peerId: string;
+  playerName: string;
+  dinoId: string;
+  chunkX: number;
+  chunkZ: number;
+  renderDistance: number;     // ← NOVO
+  lastSeen: number;
+  connectedAt: number;
+  ws: WebSocket;
+}
+
+// Mensagem de join atualizada
+type WSClientMessage =
+  | { type: 'join'; peerId: string; playerName: string; dinoId: string;
+      colors: Record<string, string>; renderDistance: number }  // ← NOVO campo
+  | { type: 'render_distance_update'; renderDistance: number }   // ← NOVA mensagem
+  | { type: 'leave' }
+  | { type: 'chunk_update'; chunkX: number; chunkZ: number }
+  | { type: 'heartbeat'; chunkX: number; chunkZ: number }
+
+// Peer list inclui renderDistance
+type WSServerMessage =
+  | { type: 'peer_list'; peers: Array<{
+      peerId, playerName, dinoId, chunkX, chunkZ, renderDistance  // ← NOVO
+    }> }
+  | { type: 'peer_joined'; peer: {
+      peerId, playerName, dinoId, chunkX, chunkZ, renderDistance  // ← NOVO
+    } }
+  | ...
+```
+
+#### 6.14.3 — Exemplo de Conexão Assimétrica
+
+```
+Cenário:
+- Peer A: chunk (2, 2), renderDistance=1 (vê 3×3 chunks: 1..3)
+- Peer B: chunk (5, 5), renderDistance=4 (vê 9×9 chunks: 1..9)
+
+Distância entre chunks: |5-2| + |5-2| = 6 (Manhattan)
+
+Avaliação:
+- Peer A vê peers em chunks com distância ≤ 1. B a 6 de distância → A não conecta em B
+- Peer B vê peers em chunks com distância ≤ 4. A a 6 de distância → B não conecta em A
+- Conexão mútua: conecta se distância ≤ renderDistance DE QUALQUER UM DOS DOIS.
+  6 ≤ 1? Não. 6 ≤ 4? Não. → NENHUM conecta no outro.
+
+OK, eles não se veem mesmo — A só vê 3 chunks, B está a 6 chunks de distância.
+```
+
+```
+Cenário 2:
+- Peer A: chunk (2, 2), renderDistance=1
+- Peer B: chunk (3, 2), renderDistance=3 (vê 7×7 chunks: 0..6)
+
+Distância: |3-2| + |2-2| = 1
+
+Avaliação:
+- A: distância 1 ≤ 1? Sim! → A conecta em B
+- B: distância 1 ≤ 3? Sim! → B conecta em A
+- Conexão estabelecida. Ambos trocam eventos.
+```
+
+```
+Cenário 3 (assimétrico):
+- Peer A: chunk (2, 2), renderDistance=1
+- Peer B: chunk (4, 2), renderDistance=3
+
+Distância: |4-2| + |2-2| = 2
+
+Avaliação:
+- A: distância 2 ≤ 1? Não. → A NÃO conecta em B
+- B: distância 2 ≤ 3? Sim! → B conecta em A
+- B inicia conexão com A. Uma vez conectados, ambos trocam eventos.
+- A recebe eventos de B (ataques em NPCs), mas B não está no render de A
+- Isso é desejável: B vê A na tela (render de B alcança), então B precisa dos eventos de A
+```
+
+#### 6.14.4 — Atualização em Tempo Real
+
+Quando o jogador altera o `renderDistance` durante o jogo (via SettingsMenu):
+
+```typescript
+// SettingsMenu.tsx
+onChange={(e) => {
+  const newDist = parseInt(e.target.value);
+  setRenderDistance(newDist);
+  
+  // Se estiver em modo Global/Party, notifica a rede
+  if (gameMode === 'global' || gameMode === 'party') {
+    signalingClient?.send({ type: 'render_distance_update', renderDistance: newDist });
+    chunkInterestManager?.updateInterestRadius();
+    peerMesh?.reconcileConnections();
+  }
+}}
+```
+
+`reconcileConnections()`:
+1. Reavalia todos os peers conhecidos (global list + conectados)
+2. Desconecta de peers que não estão mais no interest zone (considerando renderDistance de ambos)
+3. Conecta a novos peers que entraram no interest zone
+4. Mantém conexões existentes que ainda são relevantes
+
+#### 6.14.5 — Implicações na Sincronização de NPCs
+
+Com o interest zone baseado em render distance:
+- NPCs em chunks visíveis são simulados localmente (determinístico)
+- Eventos de interação são trocados com TODOS os peers no interest zone
+- Quanto maior o renderDistance, mais eventos chegam (mais peers, mais NPCs visíveis)
+- NPCManager já spawna NPCs em `SPAWN_RADIUS = 2` chunks (5×5 = 25 chunks). Se renderDistance > 2, NPCManager deve expandir SPAWN_RADIUS para corresponder:
+  ```typescript
+  // NPCManager.ts
+  const SPAWN_RADIUS = Math.max(2, useAppStore.getState().renderDistance);
+  ```
+- NPCDespawnSystem.DESPAWN_RADIUS também deve acompanhar: `renderDistance + 1`
+
+---
+
+### 6.15 — Registro de Progresso das Sprints
+
+---
+
+#### ✅ Sprint 1 — Fundação (Concluída em 2026-05-14)
+
+**O que foi implementado:**
+
+| Item | Arquivo | Descrição |
+|------|---------|-----------|
+| 1. EventBus | `src/infrastructure/network/EventBus.ts` | Fila global de eventos P2P com push/consume/getHistory/prune. ID único por hash FNV-1a. Callback `onEventPushed` para broadcast. |
+| 2. NPCManager | `src/useCases/game/NPCManager.ts` | `deterministicMode` flag, `consumeEventsFromBus()`, `applyEvent()`. SPAWN_RADIUS dinâmico via `Math.max(2, renderDistance)`. Implementa `INPCManager`. |
+| 3. NPCFsmSystem | `src/useCases/game/systems/NPCFsmSystem.ts` | Parâmetro opcional `peerPresenceInChunk`. Player visibility combinada com presença no chunk. Cálculo de `npcChunkX/Z`. |
+| 4. ChunkInterestManager | `src/infrastructure/network/ChunkInterestManager.ts` | Interesse radial por renderDistance. Hard cap 30 conexões. Conexão bidirecional. `worldToChunk()`. |
+| 5. SpawnResolver | `src/useCases/game/SpawnResolver.ts` | Spawn determinístico em anéis concêntricos. Busca packs da espécie longe de predadores/água. Fallback `(0,0)` com jitter. |
+| 6. PackCodec | `src/useCases/game/PackCodec.ts` | Encode/decode `ESPÉCIE-CxZ` (ex: `TRIC-3x5`). 6 espécies mapeadas. |
+| 7. CombatSystem | `src/useCases/game/CombatSystem.ts` | `playerAttackNPCWithEvent()` — dano local + evento EventBus. |
+| 8. Store | `src/store/useAppStore.ts` | Novo estado: `packCode`, `signalingStatus`, `globalPlayerCount`. GameMode expandido. |
+| 9. Interface | `src/domain/interfaces/INPCManager.ts` | Interface completa do NPCManager. |
+
+**Bug corrigido (pós-sprint):**
+- **NPCDinosaurs.tsx**: NPC simulation só rodava quando `onlineRole === 'host'`. Em single player (`onlineRole === null`), `NPCManager.update()` nunca era chamado → nenhum NPC spawnava. Fix: a simulação agora roda para ambos host e single player (o bloco `client` retorna cedo, então só chegam `host`/`null`).
+
+**Status do build:** `npm run build` ✅ | `npm run lint` ✅
+
+---
+
+#### Sprint 2 — PeerMesh (Modo Party) (PRÓXIMA)
+
+**O que implementar:**
+
+1. **`PeerMesh.ts`** — Classe que gerencia N conexões DataChannel simultâneas:
+   - `startParty(sessionCode?)` — modo Party com mesh completo (todos conectados)
+   - `connectToPeer()`, `disconnectFromPeer()`, `onPeerDisconnected()`
+   - Heartbeat a cada 5s, timeout de 15s para desconexão
+   - Integrar `ChunkInterestManager.onChunkChanged` para reconexão automática
+   - `broadcastEvent(event)` e `sendEventToPeers(event, peerIds)`
+
+2. **`EventReplicator.ts`** — Camada entre EventBus e PeerMesh:
+   - Conectar `EventBus.onEventPushed` ao `PeerMesh.broadcastEvent()`
+   - Recebimento/validação/deduplicação de eventos remotos
+   - History request (pedir eventos perdidos ao conectar)
+   - Gap detection (detectar ticks perdidos no heartbeat)
+
+3. **Reescrever `messages.ts`** — Novo protocolo simétrico:
+   ```typescript
+   type PeerMeshMessage =
+     | { type: 'event'; event: GameEvent }
+     | { type: 'player_state'; peerId, posX, posY, posZ, rotY, health, maxHealth, isDead, animationIntent, level, scale }
+     | { type: 'peer_handshake'; playerName, dinoId, colors, chunkX, chunkZ, tick }
+     | { type: 'peer_handshake_ack'; playerName, dinoId, colors, chunkX, chunkZ, tick }
+     | { type: 'heartbeat'; chunkX, chunkZ, tick }
+     | { type: 'event_history_request'; sinceTick: number }
+     | { type: 'event_history_response'; events: GameEvent[] }
+   ```
+
+4. **Party + Pack Code**: Todos no mesmo Party spawnam perto do pack do host.
+   - Host gera pack code automaticamente
+   - Clients recebem pack code no handshake
+
+**Antes de começar a Sprint 2:**
+- `EventBus.setOwnPeerId()` deve ser chamado após conexão com PeerJS
+- `NPCManager.setDeterministicMode(true)` ao entrar em Party
+- Usar `playerAttackNPCWithEvent()` em vez de `playerAttackNPC()` para ataques em modo Party/Global
+- Revisar testes single player com spawn perto de pack (SpawnResolver + PackCodec)
+
+---
+
+#### Sprint 3 — Signaling Server + Modo Global
+(conteúdo mantido)
+
+**O que implementar:**
+1. `server/signaling-server.ts` — incluir renderDistance nos peer records
+2. `SignalingClient.ts` — enviar renderDistance no join + render_distance_update
+3. `PeerMesh.startGlobal()` — interesse bidirecional (minha RD OU peer RD)
+4. `reconcileConnections()` — reconexão dinâmica quando renderDistance muda
+5. Integração SpawnResolver + PackCodec no Global: pack code opcional
+6. Testar: 3 peers com renderDistances diferentes
+
+---
+
+#### Sprint 4 — UI + Finalização
+(conteúdo mantido)
+
+Sobre sua pergunta
+> "Se jogar um modo party sem convidar ninguém seria considerado um modo offline?"
+Sim, faz sentido. Um Party sem outros jogadores é funcionalmente single player. Na Sprint 4 (UI), podemos tratar Party solo como "Modo Offline" — ou adicionar um toggle. Deixo para decidirmos quando chegarmos lá.
+
+**O que implementar:**
+1. `SessionSelectScreen.tsx` — 3 modos (Global, Party, Single)
+2. `CharacterSelectionMenu.tsx` — + campo pack code, + botão gerar código
+3. `BandPanel.tsx` — + mostrar pack code atual, + copiar
+4. `GameScreen.tsx` — remover host transfer
+5. `useAppStore.ts` — novo estado + packCode (✅ já feito no Sprint 1)
+6. `PlayerDinosaur.tsx` — spawn position via SpawnResolver ou pack code
+7. Remover arquivos legados: PeerHost.ts, PeerClient.ts, PeerSession.ts, NpcSnapshotInterpolator.ts
+8. Testar: todos os modos + pack codes + render distance dinâmico

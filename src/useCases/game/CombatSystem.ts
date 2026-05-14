@@ -8,6 +8,7 @@ const dinoStatsMap: Record<string, DinosaurStats> = {};
 for (const d of DINOSAUR_ROSTER) dinoStatsMap[d.id] = d;
 import { PlayerPositionRef } from './PlayerPositionRef';
 import { calculateInteractRadius, isInInteractionRange } from '../../domain/services/DinosaurService';
+import { EventBus } from '../../infrastructure/network/EventBus';
 
 /**
  * Sistema de Combate puro — sem dependência de React ou Three.js.
@@ -193,6 +194,46 @@ export function playerAttackNPC(
     targetHealth: target.health,
     targetDied: died,
   };
+}
+
+/**
+ * Versão do ataque do jogador que gera eventos via EventBus.
+ * Usado em modo Party/Global para sincronizar o ataque com peers remotos.
+ * Aplica o dano localmente E dispara o evento para replicação.
+ */
+export function playerAttackNPCWithEvent(
+  playerPosX: number,
+  playerPosZ: number,
+  playerScale: number,
+  playerStrength: number,
+  playerLevel: number,
+  target: NPCData,
+  tick: number
+): CombatEvent | null {
+  const result = playerAttackNPC(playerPosX, playerPosZ, playerScale, playerStrength, playerLevel, target);
+  if (result) {
+    EventBus.push({
+      type: 'npc_attack',
+      tick,
+      originPeerId: 'local',
+      data: {
+        npcId: target.id,
+        damage: result.damage,
+        attackerPosX: playerPosX,
+        attackerPosZ: playerPosZ,
+      },
+    });
+
+    if (result.targetDied) {
+      EventBus.push({
+        type: 'npc_died',
+        tick,
+        originPeerId: 'local',
+        data: { npcId: target.id },
+      });
+    }
+  }
+  return result;
 }
 
 /**

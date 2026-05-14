@@ -286,10 +286,10 @@ export const NPCDinosaurs: React.FC = () => {
       return;
     }
 
-    // Cache local para evitar múltiplos getState() no mesmo frame
-    const hostState = onlineRole === 'host' ? useAppStore.getState() : null;
+    // Cliente remoto já retornou acima. Aqui só chegam host (onlineRole === 'host')
+    // e single player (onlineRole === null). Ambos simulam NPCs localmente.
 
-    // Pré-computa remotePlayers uma vez (usado tanto para setRemotePlayers quanto para broadcast)
+    // Host: alimenta remotePlayers com estados dos clientes conectados
     if (onlineRole === 'host') {
       const hostPlayerStates = peerSession.getHostPlayerStates();
       const remotePlayers = hostPlayerStates.map(p => {
@@ -308,23 +308,27 @@ export const NPCDinosaurs: React.FC = () => {
         };
       });
       NPCManager.setRemotePlayers(remotePlayers);
+    }
 
-      // Host/Offline: roda simulação autoritativa
-      simulationAccumulator.current = Math.min(simulationAccumulator.current + delta, FIXED_TIMESTEP * MAX_SUBSTEPS);
+    // Simulação autoritativa (host + single player)
+    simulationAccumulator.current = Math.min(simulationAccumulator.current + delta, FIXED_TIMESTEP * MAX_SUBSTEPS);
 
-      let substeps = 0;
-      while (simulationAccumulator.current >= FIXED_TIMESTEP && substeps < MAX_SUBSTEPS) {
-        NPCManager.update(FIXED_TIMESTEP, pp.x, pp.z, pp.level, pp.scale, pp.diet, pp.strength);
-        simulationAccumulator.current -= FIXED_TIMESTEP;
-        substeps++;
-      }
+    let substeps = 0;
+    while (simulationAccumulator.current >= FIXED_TIMESTEP && substeps < MAX_SUBSTEPS) {
+      NPCManager.update(FIXED_TIMESTEP, pp.x, pp.z, pp.level, pp.scale, pp.diet, pp.strength);
+      simulationAccumulator.current -= FIXED_TIMESTEP;
+      substeps++;
+    }
 
-      const dmg = NPCManager.consumePlayerDamage();
-      if (!pp.isDead && dmg > 0) {
-        useAppStore.getState().takeDamage(dmg);
-      }
+    const dmg = NPCManager.consumePlayerDamage();
+    if (!pp.isDead && dmg > 0) {
+      useAppStore.getState().takeDamage(dmg);
+    }
 
-      // Processa ações de clientes (ataque/comer contra NPCs)
+    // Host-only: processa inputs de clientes e broadcast de snapshots
+    if (onlineRole === 'host') {
+      const hostState = useAppStore.getState();
+
       const allClients = peerSession.getHostClients();
       for (const client of allClients) {
         const input = peerSession.peekRemoteInput(client.id);
@@ -342,24 +346,23 @@ export const NPCDinosaurs: React.FC = () => {
         }
       }
 
-      // Broadcasta snapshot para clientes conectados
       const allNPCs = NPCManager.getActiveNPCs();
 
+      const hostPlayerStates = peerSession.getHostPlayerStates();
       const hostPlayer: import('../../infrastructure/network/messages').PlayerStateSnapshot = {
         id: 'host',
-        name: hostState!.playerName,
-        dinoId: hostState!.selectedDinoId,
-        dinoColors: hostState!.dinoColors,
+        name: hostState.playerName,
+        dinoId: hostState.selectedDinoId,
+        dinoColors: hostState.dinoColors,
         posX: pp.x, posY: pp.y, posZ: pp.z,
         rotY: pp.rotY,
         level: pp.level,
-        health: hostState!.health,
-        maxHealth: hostState!.maxHealth,
+        health: hostState.health,
+        maxHealth: hostState.maxHealth,
         isDead: pp.isDead,
         animationIntent: pp.animationIntent,
       };
 
-      // Aplica dano NPC a jogadores remotos antes do broadcast
       const clientPlayers = hostPlayerStates.map(p => {
         if (NPCManager.hasPendingRemoteDamage(p.id)) {
           const damage = NPCManager.consumeRemoteDamage(p.id);
@@ -369,12 +372,11 @@ export const NPCDinosaurs: React.FC = () => {
       });
       const allPlayers = [hostPlayer, ...clientPlayers];
 
-      const edibleStates = hostState!.edibleStates;
       peerSession.broadcastSnapshot(
         NPCManager.getSimulationTick(),
         allNPCs,
         allPlayers,
-        edibleStates
+        hostState.edibleStates
       );
     }
 

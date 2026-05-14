@@ -15,16 +15,26 @@ import { NPCDespawnSystem } from './systems/NPCDespawnSystem';
 import { NPCFsmSystem } from './systems/NPCFsmSystem';
 import { NPCMovementSystem } from './systems/NPCMovementSystem';
 import { SeededRandomProvider } from '../../infrastructure/random/SeededRandomProvider';
+import { EventBus, type GameEvent } from '../../infrastructure/network/EventBus';
+import { ChunkInterestManager } from '../../infrastructure/network/ChunkInterestManager';
+import type { INPCManager } from '../../domain/interfaces/INPCManager';
+import { useAppStore } from '../../store/useAppStore';
 
 const CHUNK_SIZE = 50;
-const SPAWN_RADIUS = 2;
 const DEFAULT_WORLD_SEED = 12345;
+
+function getSpawnRadius(): number {
+  return Math.max(2, useAppStore.getState().renderDistance);
+}
+
+// getDespawnRadius será usado no Sprint 2 ao integrar com NPCDespawnSystem
+// function getDespawnRadius(): number { return getSpawnRadius() + 1; }
 
 // Lookup O(1) — evita Array.find() no hot path
 const dinoStatsMap: Record<string, import('../../domain/models/DinosaurStats').DinosaurStats> = {};
 for (const d of DINOSAUR_ROSTER) dinoStatsMap[d.id] = d;
 
-class NPCManagerClass {
+class NPCManagerClass implements INPCManager {
   private npcs: Map<string, NPCData> = new Map();
   private spawnedChunks: Set<string> = new Set();
   private behaviorFactory = new NpcBehaviorFactory();
@@ -33,10 +43,12 @@ class NPCManagerClass {
   private pendingDamageToPlayer = 0;
   private pendingRemoteDamage = new Map<string, number>();
   private isAuthority = true;
+  private deterministicMode = false;
   private gameStateGateway: IGameStateGateway | null = null;
   private worldQueryGateway: IWorldQueryGateway | null = null;
   private worldSeed = DEFAULT_WORLD_SEED;
   private simulationTick = 0;
+  private chunkInterestManager: ChunkInterestManager | null = null;
 
   private spawnSystem = new NPCSpawnSystem();
   private despawnSystem = new NPCDespawnSystem();
@@ -65,6 +77,74 @@ class NPCManagerClass {
     this.worldSeed = worldSeed;
   }
 
+  setDeterministicMode(enabled: boolean): void {
+    this.deterministicMode = enabled;
+  }
+
+  setChunkInterestManager(mgr: ChunkInterestManager): void {
+    this.chunkInterestManager = mgr;
+  }
+
+  consumeEventsFromBus(maxTick: number): void {
+    const events = EventBus.consume(maxTick);
+    for (const event of events) {
+      this.applyEvent(event);
+    }
+    EventBus.prune(this.simulationTick);
+  }
+
+  private applyEvent(event: GameEvent): void {
+    switch (event.type) {
+      case 'npc_attack': {
+        const npcId = event.data.npcId as string;
+        const npc = this.npcs.get(npcId);
+        if (npc && npc.health > 0) {
+          npc.health = Math.max(0, npc.health - (event.data.damage as number));
+          npc.isHit = true;
+          npc.hitTimer = 0.3;
+          if (npc.health <= 0) {
+            npc.state = NPCState.Dead;
+            npc.animationIntent = 'Death';
+            EventBus.push({
+              type: 'npc_died',
+              tick: event.tick,
+              originPeerId: event.originPeerId,
+              data: { npcId: npc.id },
+            });
+          }
+        }
+        break;
+      }
+      case 'npc_died': {
+        const deadId = event.data.npcId as string;
+        const dead = this.npcs.get(deadId);
+        if (dead && dead.state !== NPCState.Dead) {
+          dead.health = 0;
+          dead.state = NPCState.Dead;
+          dead.animationIntent = 'Death';
+        }
+        break;
+      }
+      case 'food_consumed': {
+        const foodId = event.data.foodId as string;
+        if (this.gameStateGateway) {
+          this.gameStateGateway.damageEdible(foodId, 1);
+        }
+        break;
+      }
+      case 'player_chunk': {
+        if (this.chunkInterestManager) {
+          this.chunkInterestManager.updatePeerChunk(
+            event.data.peerId as string,
+            event.data.chunkX as number,
+            event.data.chunkZ as number
+          );
+        }
+        break;
+      }
+    }
+  }
+
   private getGateways(): { gameState: IGameStateGateway; worldQuery: IWorldQueryGateway } | null {
     if (!this.gameStateGateway || !this.worldQueryGateway) {
       return null;
@@ -89,6 +169,8 @@ class NPCManagerClass {
     this.lastCacheChunkX = NaN;
     this.lastCacheChunkZ = NaN;
     this.lastPlayerDeadState = false;
+    EventBus.clear();
+    this.deterministicMode = false;
   }
 
   private getStrategyForNPC(npc: NPCData): IBehaviorStrategy {
@@ -336,11 +418,17 @@ class NPCManagerClass {
       this.hasPlayerSpawnPos = true;
     }
 
+    // Em modo determinístico, consome eventos do EventBus antes de simular
+    if (this.deterministicMode) {
+      this.consumeEventsFromBus(this.simulationTick);
+    }
+
     const playerChunkX = Math.floor(playerX / CHUNK_SIZE);
     const playerChunkZ = Math.floor(playerZ / CHUNK_SIZE);
+    const spawnRadius = getSpawnRadius();
 
-    for (let cx = -SPAWN_RADIUS; cx <= SPAWN_RADIUS; cx++) {
-      for (let cz = -SPAWN_RADIUS; cz <= SPAWN_RADIUS; cz++) {
+    for (let cx = -spawnRadius; cx <= spawnRadius; cx++) {
+      for (let cz = -spawnRadius; cz <= spawnRadius; cz++) {
         this.spawnSystem.spawnNPCsForChunk({
           chunkX: playerChunkX + cx,
           chunkZ: playerChunkZ + cz,
@@ -401,7 +489,7 @@ class NPCManagerClass {
     // Também inclui areas de remote players para que NPCs simulados perto deles tenham dados corretos.
     if (playerChunkX !== this.lastCacheChunkX || playerChunkZ !== this.lastCacheChunkZ || playerDeathStateChanged) {
       this.edibleCache = this.getEdiblePositions(playerX, playerZ, gameState, worldQuery);
-      this.obstacleCache = worldQuery.getNearbyObstacles(playerX, playerZ, SPAWN_RADIUS + 1);
+      this.obstacleCache = worldQuery.getNearbyObstacles(playerX, playerZ, getSpawnRadius() + 1);
 
       // Merge edibles/obstacles from remote player areas
       for (const rp of this.remotePlayers) {
@@ -655,7 +743,7 @@ class NPCManagerClass {
   ): WorldEdiblePoint[] {
     const result: WorldEdiblePoint[] = [];
 
-    for (const edible of worldQuery.getNearbyEdibles(playerX, playerZ, SPAWN_RADIUS)) {
+    for (const edible of worldQuery.getNearbyEdibles(playerX, playerZ, getSpawnRadius())) {
       const remaining = gameState.getEdibleRemaining(edible.id);
       if (remaining > 0) {
         result.push({
