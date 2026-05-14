@@ -1344,80 +1344,98 @@ Com o interest zone baseado em render distance:
 | 8. Store | `src/store/useAppStore.ts` | Novo estado: `packCode`, `signalingStatus`, `globalPlayerCount`. GameMode expandido. |
 | 9. Interface | `src/domain/interfaces/INPCManager.ts` | Interface completa do NPCManager. |
 
-**Bug corrigido (pós-sprint):**
+**Bugs corrigidos (pós-sprint):**
 - **NPCDinosaurs.tsx**: NPC simulation só rodava quando `onlineRole === 'host'`. Em single player (`onlineRole === null`), `NPCManager.update()` nunca era chamado → nenhum NPC spawnava. Fix: a simulação agora roda para ambos host e single player (o bloco `client` retorna cedo, então só chegam `host`/`null`).
+- **SpawnResolver**: `resolveCarnivore()` só evitava outros carnívoros, mas não herbívoros. Carnívoros podiam spawnar em cima de packs herbívoros → combate imediato. Fix: `hasDinosNearby()` agora checa AMBOS carnívoros e packs de herbívoros no chunk.
+- **PlayerDinosaur.tsx**: SpawnResolver não estava integrado — jogador sempre spawnava em `(0,0,0)`. Fix: `useLayoutEffect` calcula posição de spawn via SpawnResolver e aplica no `playerRef`. Suporta PackCodec (se `packCode` no store).
 
 **Status do build:** `npm run build` ✅ | `npm run lint` ✅
 
 ---
 
-#### Sprint 2 — PeerMesh (Modo Party) (PRÓXIMA)
+#### ✅ Sprint 2 — PeerMesh (Modo Party) (Concluída em 2026-05-14)
 
-**O que implementar:**
+**O que foi implementado:**
 
-1. **`PeerMesh.ts`** — Classe que gerencia N conexões DataChannel simultâneas:
-   - `startParty(sessionCode?)` — modo Party com mesh completo (todos conectados)
-   - `connectToPeer()`, `disconnectFromPeer()`, `onPeerDisconnected()`
-   - Heartbeat a cada 5s, timeout de 15s para desconexão
-   - Integrar `ChunkInterestManager.onChunkChanged` para reconexão automática
-   - `broadcastEvent(event)` e `sendEventToPeers(event, peerIds)`
+| Item | Arquivo | Descrição |
+|------|---------|-----------|
+| 1. PeerMesh | `src/infrastructure/network/PeerMesh.ts` | Classe que gerencia N conexões DataChannel simultâneas. `startParty(sessionCode?)` com full mesh — primeiro peer é host do discovery, todos conectam entre si. Heartbeat a cada 5s, timeout 15s. `broadcastEvent()`, `sendEventToPeers()`, `sendPlayerState()` (throttled 100ms). Integrado com ChunkInterestManager via `onChunkChanged`. Handshake simétrico. |
+| 2. EventReplicator | `src/infrastructure/network/EventReplicator.ts` | Ponte EventBus ↔ PeerMesh. `enable()` conecta `EventBus.onEventPushed → PeerMesh.broadcastEvent()`. Deduplicação por ID de evento. History request/response para late joiners. Gap detection via heartbeat ticks. |
+| 3. messages.ts | `src/infrastructure/network/messages.ts` | Reescrevido com tipos simétricos P2P + mantidos tipos legados (PeerHost/Client). Novos: `PeerHandshakeMessage`, `PeerHandshakeAckMessage`, `EventMessage`, `PlayerStateMessage`, `HeartbeatMessage`, `PeerListMessage`, `EventHistoryRequestMessage`, `EventHistoryResponseMessage`. |
+| 4. Party + Pack Code | SpawnResolver + PackCodec | SpawnResolver e PackCodec criados no Sprint 1. Integração completa com o fluxo Party via handshake (chunk posição é compartilhada entre peers). |
 
-2. **`EventReplicator.ts`** — Camada entre EventBus e PeerMesh:
-   - Conectar `EventBus.onEventPushed` ao `PeerMesh.broadcastEvent()`
-   - Recebimento/validação/deduplicação de eventos remotos
-   - History request (pedir eventos perdidos ao conectar)
-   - Gap detection (detectar ticks perdidos no heartbeat)
+**Detalhamento do PeerMesh:**
 
-3. **Reescrever `messages.ts`** — Novo protocolo simétrico:
-   ```typescript
-   type PeerMeshMessage =
-     | { type: 'event'; event: GameEvent }
-     | { type: 'player_state'; peerId, posX, posY, posZ, rotY, health, maxHealth, isDead, animationIntent, level, scale }
-     | { type: 'peer_handshake'; playerName, dinoId, colors, chunkX, chunkZ, tick }
-     | { type: 'peer_handshake_ack'; playerName, dinoId, colors, chunkX, chunkZ, tick }
-     | { type: 'heartbeat'; chunkX, chunkZ, tick }
-     | { type: 'event_history_request'; sinceTick: number }
-     | { type: 'event_history_response'; events: GameEvent[] }
-   ```
+**Fluxo de conexão Party:**
+1. **Primeiro peer** (criador): `startParty()` → gera session code de 4 letras → cria `Peer(sessionCode)` → aguarda conexões entrantes
+2. **Peers seguintes**: `startParty(sessionCode)` → cria `Peer(generatePeerId())` → conecta ao host → envia `peer_handshake`
+3. **Host** recebe handshake → envia `peer_handshake_ack` + `peer_list` com todos os peers conhecidos
+4. **Peer** recebe `peer_list` → conecta diretamente a cada peer listado → envia handshake para cada um
+5. **Full mesh** estabelecida: N peers = N×(N-1) conexões
 
-4. **Party + Pack Code**: Todos no mesmo Party spawnam perto do pack do host.
-   - Host gera pack code automaticamente
-   - Clients recebem pack code no handshake
+**Gerenciamento de conexões:**
+- `_connections: Map<peerId, DataConnection>` — todas as conexões ativas
+- `_peerInfo: Map<peerId, PeerInfo>` — metadados (nome, dino, chunk)
+- `_lastPeerHeartbeat: Map<peerId, timestamp>` — para timeout detection
+- Conexões perdidas são removidas automaticamente via `conn.on('close')` e heartbeat timeout
 
-**Antes de começar a Sprint 2:**
-- `EventBus.setOwnPeerId()` deve ser chamado após conexão com PeerJS
-- `NPCManager.setDeterministicMode(true)` ao entrar em Party
-- Usar `playerAttackNPCWithEvent()` em vez de `playerAttackNPC()` para ataques em modo Party/Global
-- Revisar testes single player com spawn perto de pack (SpawnResolver + PackCodec)
+**Integração EventBus ↔ PeerMesh via EventReplicator:**
+- `EventReplicator.enable()` → `EventBus.onEventPushed = (event) => PeerMesh.broadcastEvent(event)`
+- Eventos recebidos da rede → inseridos no EventBus local → consumidos no próximo tick do NPCManager
+- Deduplicação: cache de até 1000 IDs de eventos processados
+
+**Status do build:** `npm run build` ✅ | `npm run lint` ✅ (apenas erro pré-existente em PeerSession.ts)
 
 ---
 
-#### Sprint 3 — Signaling Server + Modo Global
-(conteúdo mantido)
+#### Sprint 3 — Signaling Server + Modo Global (PRÓXIMA)
+
+**Pré-requisitos:**
+- PeerMesh testado em modo Party
+- Compreensão do `ReconcileConnections` pattern
+- Node.js disponível para o servidor
 
 **O que implementar:**
-1. `server/signaling-server.ts` — incluir renderDistance nos peer records
-2. `SignalingClient.ts` — enviar renderDistance no join + render_distance_update
-3. `PeerMesh.startGlobal()` — interesse bidirecional (minha RD OU peer RD)
-4. `reconcileConnections()` — reconexão dinâmica quando renderDistance muda
-5. Integração SpawnResolver + PackCodec no Global: pack code opcional
-6. Testar: 3 peers com renderDistances diferentes
+
+1. **`server/signaling-server.ts`** — Servidor WebSocket (~200 linhas) que mantém lista de peers conectados e seus chunks:
+   - Tecnologia: `ws` (recomendado para simplicidade inicial, migrar para `uWebSockets.js` depois)
+   - `ConnectedPeer { peerId, playerName, dinoId, chunkX, chunkZ, renderDistance, lastSeen, ws }`
+   - Mensagens: `join`, `leave`, `chunk_update`, `heartbeat`, `render_distance_update`
+   - Broadcast de `peer_joined`/`peer_left`/`peer_chunk_update` para todos conectados
+   - Rate limiting: heartbeat a cada 10s, timeout 30s, max 100 peers simultâneos
+   - URL configurável via `VITE_SIGNALING_URL`
+
+2. **`SignalingClient.ts`** — Wrapper WebSocket no frontend:
+   - `connect()`, `sendJoin()`, `sendChunkUpdate()`, `sendLeave()`, `sendHeartbeat()`
+   - Reconexão com backoff exponencial (max 5 tentativas)
+   - Callbacks: `onPeerList`, `onPeerJoined`, `onPeerLeft`, `onPeerChunkUpdate`, `onWelcome`
+
+3. **`PeerMesh.startGlobal()`** — Conexão via Signaling server:
+   - Conecta ao WebSocket → recebe peer list → filtra por interest zone → conecta via PeerJS
+   - Interesse bidirecional: conecta se distância ≤ meu `renderDistance` OU ≤ renderDistance do peer
+   - `reconcileConnections()` — reconexão dinâmica quando renderDistance muda
+
+4. **SpawnResolver + PackCodec no Global** — Pack code opcional para cair junto com amigos
+
+5. **Testar**: 3 peers com renderDistances diferentes, verificar reconexão, late join
+
+**Antes de começar:**
+- Verificar se o servidor Node.js tem as dependências corretas
+- Configurar `VITE_SIGNALING_URL` no `.env`
+- Testar Party mode para garantir que PeerMesh está estável
 
 ---
 
 #### Sprint 4 — UI + Finalização
-(conteúdo mantido)
-
-Sobre sua pergunta
-> "Se jogar um modo party sem convidar ninguém seria considerado um modo offline?"
-Sim, faz sentido. Um Party sem outros jogadores é funcionalmente single player. Na Sprint 4 (UI), podemos tratar Party solo como "Modo Offline" — ou adicionar um toggle. Deixo para decidirmos quando chegarmos lá.
 
 **O que implementar:**
-1. `SessionSelectScreen.tsx` — 3 modos (Global, Party, Single)
-2. `CharacterSelectionMenu.tsx` — + campo pack code, + botão gerar código
-3. `BandPanel.tsx` — + mostrar pack code atual, + copiar
-4. `GameScreen.tsx` — remover host transfer
-5. `useAppStore.ts` — novo estado + packCode (✅ já feito no Sprint 1)
-6. `PlayerDinosaur.tsx` — spawn position via SpawnResolver ou pack code
-7. Remover arquivos legados: PeerHost.ts, PeerClient.ts, PeerSession.ts, NpcSnapshotInterpolator.ts
+1. `SessionSelectScreen.tsx` — 3 modos (Global, Party, Single) com cards visuais
+2. `CharacterSelectionMenu.tsx` — + campo pack code, + botão "Gerar código do meu pack"
+3. `BandPanel.tsx` — + mostrar pack code atual, + botão copiar
+4. `GameScreen.tsx` — remover host transfer, integrar PeerMesh.destroy() no leave
+5. `PlayerDinosaur.tsx` — spawn position via SpawnResolver ou pack code
+6. `RemotePlayers.tsx` — ler `PeerMesh.getRemotePlayerStates()` ao invés de host snapshots
+7. Remover arquivos legados: `PeerHost.ts`, `PeerClient.ts`, `PeerSession.ts`, `NpcSnapshotInterpolator.ts`
 8. Testar: todos os modos + pack codes + render distance dinâmico
+
+**Nota sobre modo offline:** Um Party sem outros jogadores é funcionalmente single player. Na Sprint 4, podemos tratar Party solo como "Modo Offline" ou adicionar um toggle.

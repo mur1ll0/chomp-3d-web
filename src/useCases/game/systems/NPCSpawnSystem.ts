@@ -5,11 +5,12 @@ import type { IWorldQueryGateway } from '../contracts/IWorldQueryGateway';
 
 const CHUNK_SIZE = 50;
 const MAX_ACTIVE_NPCS = 40;
-const HERBIVORE_DENSITY = 3;
-const CARNIVORE_DENSITY = 0.3;
+const HERBIVORE_DENSITY = 4;
+const CARNIVORE_DENSITY = 0.25;
 const HERB_GROUP_SIZE = 3;
 const CARNIVORE_GUARANTEE_AREA = 5;
 const PLAYER_EXCLUSION_RADIUS = 40;
+const HERBIVORE_EXCLUSION_RADIUS = 0;
 
 const HERBIVORE_ROSTER = DINOSAUR_ROSTER.filter(d => d.diet === 'Herbivore');
 const CARNIVORE_ROSTER_LIST = DINOSAUR_ROSTER.filter(d => d.diet === 'Carnivore');
@@ -61,15 +62,6 @@ export class NPCSpawnSystem {
 
       if (worldQuery.isWaterAt(groupCenterX, groupCenterZ)) continue;
 
-      const distFromSpawnSq = groupCenterX * groupCenterX + groupCenterZ * groupCenterZ;
-      if (distFromSpawnSq < PLAYER_EXCLUSION_RADIUS * PLAYER_EXCLUSION_RADIUS) continue;
-
-      if (hasPlayerSpawnPos) {
-        const dxP = groupCenterX - playerSpawnX;
-        const dzP = groupCenterZ - playerSpawnZ;
-        if (dxP * dxP + dzP * dzP < PLAYER_EXCLUSION_RADIUS * PLAYER_EXCLUSION_RADIUS) continue;
-      }
-
       const specIdx = Math.floor(seededRandom(chunkX + g, chunkZ + g, 200) * HERBIVORE_ROSTER.length);
       const species = HERBIVORE_ROSTER[specIdx];
 
@@ -85,6 +77,13 @@ export class NPCSpawnSystem {
         const pz = groupCenterZ + offsetZ;
 
         if (worldQuery.isWaterAt(px, pz)) continue;
+
+        // Exclusão por NPC individual (não por grupo): só impede NPC no pixel exato do player
+        if (hasPlayerSpawnPos) {
+          const dxP = px - playerSpawnX;
+          const dzP = pz - playerSpawnZ;
+          if (dxP * dxP + dzP * dzP < HERBIVORE_EXCLUSION_RADIUS * HERBIVORE_EXCLUSION_RADIUS) continue;
+        }
 
         const isJuvenile = seededRandom(px, pz, 400) < 0.35;
         const levelVariation = Math.floor(seededRandom(px, pz, 410) * 6) - 2;

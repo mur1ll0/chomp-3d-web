@@ -1,6 +1,6 @@
-import type { NPCData } from '../../domain/models/NPCDinosaur';
+import type { GameEvent } from './EventBus';
 
-// ── Client → Host ──
+// ── Tipos legados (PeerHost/PeerClient/PeerSession) — serão removidos na Sprint 4 ──
 
 export interface JoinMessage {
   type: 'join';
@@ -51,8 +51,6 @@ export interface HostTransferAckMessage {
 
 export type ClientMessage = JoinMessage | InputMessage | LeaveMessage | HostTransferAckMessage;
 
-// ── Host → Client ──
-
 export interface JoinAckMessage {
   type: 'join_ack';
   clientId: string;
@@ -79,7 +77,7 @@ export interface PlayerStateSnapshot {
 export interface SnapshotMessage {
   type: 'snapshot';
   tick: number;
-  npcs: NPCData[];
+  npcs: unknown[];
   players: PlayerStateSnapshot[];
   edibleStates: Record<string, number>;
 }
@@ -100,3 +98,89 @@ export interface ErrorMessage {
 }
 
 export type ServerMessage = JoinAckMessage | SnapshotMessage | PlayerJoinedMessage | PlayerLeftMessage | ErrorMessage | ClientListMessage | HostTransferMessage;
+
+// ── Novas mensagens simétricas P2P (PeerMesh) ──
+
+export interface PeerHandshakeMessage {
+  type: 'peer_handshake';
+  peerId: string;
+  playerName: string;
+  dinoId: string;
+  colors: Record<string, string>;
+  chunkX: number;
+  chunkZ: number;
+  tick: number;
+}
+
+export interface PeerHandshakeAckMessage {
+  type: 'peer_handshake_ack';
+  peerId: string;
+  playerName: string;
+  dinoId: string;
+  colors: Record<string, string>;
+  chunkX: number;
+  chunkZ: number;
+  tick: number;
+}
+
+export interface EventMessage {
+  type: 'event';
+  event: GameEvent;
+}
+
+export interface PlayerStateMessage {
+  type: 'player_state';
+  peerId: string;
+  posX: number;
+  posY: number;
+  posZ: number;
+  rotY: number;
+  health: number;
+  maxHealth: number;
+  isDead: boolean;
+  animationIntent: string;
+  level: number;
+  scale: number;
+}
+
+export interface HeartbeatMessage {
+  type: 'heartbeat';
+  chunkX: number;
+  chunkZ: number;
+  tick: number;
+  renderDistance: number;
+}
+
+export interface PeerListMessage {
+  type: 'peer_list';
+  peers: Array<{
+    peerId: string;
+    playerName: string;
+    dinoId: string;
+    colors: Record<string, string>;
+    chunkX: number;
+    chunkZ: number;
+  }>;
+}
+
+export interface EventHistoryRequestMessage {
+  type: 'event_history_request';
+  sinceTick: number;
+  requesterPeerId: string;
+}
+
+export interface EventHistoryResponseMessage {
+  type: 'event_history_response';
+  events: GameEvent[];
+  targetPeerId: string;
+}
+
+export type PeerMeshMessage =
+  | PeerHandshakeMessage
+  | PeerHandshakeAckMessage
+  | EventMessage
+  | PlayerStateMessage
+  | HeartbeatMessage
+  | PeerListMessage
+  | EventHistoryRequestMessage
+  | EventHistoryResponseMessage;

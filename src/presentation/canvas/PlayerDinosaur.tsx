@@ -17,6 +17,9 @@ import { calculateFinalScale, calculateInteractRadius, calculateBiteDamage, calc
 import { useDinosaurAnimations } from '../hooks/useDinosaurAnimations';
 import { cloneSkinnedMesh } from '../utils/ThreeUtils';
 import { peerSession } from '../../infrastructure/network/PeerSession';
+import { SpawnResolver } from '../../useCases/game/SpawnResolver';
+import { PackCodec } from '../../useCases/game/PackCodec';
+import { WORLD_SEED } from '../../infrastructure/generation/MapGenerator';
 
 // Vetores reutilizáveis para evitar alocações por frame (GC pressure)
 const _forward = new THREE.Vector3();
@@ -160,6 +163,22 @@ export const PlayerDinosaur: React.FC = () => {
     window.addEventListener('wheel', handleWheel);
     return () => window.removeEventListener('wheel', handleWheel);
   }, []);
+
+  // Spawn determinístico — computado DURANTE o render (não em effect), usado no <group position>
+  const initialPosition = useMemo<[number, number, number]>(() => {
+    const resolver = new SpawnResolver(WORLD_SEED);
+    const packCode = useAppStore.getState().packCode;
+    if (packCode) {
+      const decoded = PackCodec.decode(packCode);
+      if (decoded && decoded.speciesId === selectedDinoId) {
+        const pos = resolver.resolveByPackCode(selectedDinoId, decoded.chunkX, decoded.chunkZ);
+        return [pos.worldX, 0, pos.worldZ];
+      }
+    }
+    const herbivoreRoster = DINOSAUR_ROSTER.filter(d => d.diet === 'Herbivore').map(d => d.id);
+    const pos = resolver.resolve(selectedDinoId, herbivoreRoster, dinoStats.diet);
+    return [pos.worldX, 0, pos.worldZ];
+  }, [selectedDinoId, dinoStats.diet]);
 
   // Calcula escala global base e escala final com base no Level
   const GLOBAL_SCALE_MODIFIER = 0.15;
@@ -721,7 +740,7 @@ export const PlayerDinosaur: React.FC = () => {
   return (
     <>
       {!isDead && <PointerLockControls enabled={!isActing} />}
-      <group ref={playerRef} position={[0, 0, 0]}>
+      <group ref={playerRef} position={initialPosition}>
         <group scale={[finalScale, finalScale, finalScale]}>
           <primitive object={playerModel} />
         </group>

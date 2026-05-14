@@ -2,8 +2,8 @@ import { getWaterValue, WATER_THRESHOLD } from '../../infrastructure/generation/
 
 export const CHUNK_SIZE = 50;
 const SEARCH_RADIUS = 15;
-const CARNIVORE_CHECK_RADIUS = 2;
 const WATER_CHECK_RESOLUTION = 5;
+const MAX_WATER_RETRIES = 5;
 
 function seededRandom(x: number, z: number, salt: number = 0): number {
   return Math.abs((Math.sin((x + salt) * 12.9898 + (z + salt) * 78.233) * 43758.5453) % 1);
@@ -28,11 +28,23 @@ export class SpawnResolver {
       return this.resolveCarnivore();
     }
 
+    // Primeira passada: prefere packs SEM carnívoros próximos
     for (let radius = 1; radius <= SEARCH_RADIUS; radius++) {
       for (let cx = -radius; cx <= radius; cx++) {
         for (let cz = -radius; cz <= radius; cz++) {
           if (Math.abs(cx) !== radius && Math.abs(cz) !== radius) continue;
-          const pos = this.evaluateChunk(cx, cz, speciesId, herbivoreRoster);
+          const pos = this.evaluateHerbivoreChunk(cx, cz, speciesId, herbivoreRoster, true);
+          if (pos) return pos;
+        }
+      }
+    }
+
+    // Segunda passada: qualquer pack da espécie, mesmo com carnívoro por perto
+    for (let radius = 1; radius <= SEARCH_RADIUS; radius++) {
+      for (let cx = -radius; cx <= radius; cx++) {
+        for (let cz = -radius; cz <= radius; cz++) {
+          if (Math.abs(cx) !== radius && Math.abs(cz) !== radius) continue;
+          const pos = this.evaluateHerbivoreChunk(cx, cz, speciesId, herbivoreRoster, false);
           if (pos) return pos;
         }
       }
@@ -54,47 +66,54 @@ export class SpawnResolver {
       for (let cx = -radius; cx <= radius; cx++) {
         for (let cz = -radius; cz <= radius; cz++) {
           if (Math.abs(cx) !== radius && Math.abs(cz) !== radius) continue;
-          if (!this.hasCarnivoreNearby(cx, cz)) {
-            const wx = cx * CHUNK_SIZE + seededRandom(cx, cz, 510) * CHUNK_SIZE;
-            const wz = cz * CHUNK_SIZE + seededRandom(cz, cx, 520) * CHUNK_SIZE;
-            return { chunkX: cx, chunkZ: cz, worldX: wx, worldZ: wz };
+          const startX = cx * CHUNK_SIZE;
+          const startZ = cz * CHUNK_SIZE;
+          if (this.isAreaWater(startX + CHUNK_SIZE / 2, startZ + CHUNK_SIZE / 2)) continue;
+          if (this.hasCarnivoreNearby(cx, cz)) continue;
+          for (let attempt = 0; attempt < MAX_WATER_RETRIES; attempt++) {
+            const wx = startX + seededRandom(cx + attempt, cz, 510) * CHUNK_SIZE;
+            const wz = startZ + seededRandom(cz, cx + attempt, 520) * CHUNK_SIZE;
+            if (!this.isAreaWater(wx, wz)) {
+              return { chunkX: cx, chunkZ: cz, worldX: wx, worldZ: wz };
+            }
           }
         }
       }
     }
-    return { chunkX: 0, chunkZ: 0, worldX: 0, worldZ: 0 };
+    const jitterX = (seededRandom(0, 0, 999) - 0.5) * 20;
+    const jitterZ = (seededRandom(0, 0, 888) - 0.5) * 20;
+    return { chunkX: 0, chunkZ: 0, worldX: jitterX, worldZ: jitterZ };
   }
 
-  private evaluateChunk(cx: number, cz: number, speciesId: string, herbivoreRoster: string[]): SpawnPosition | null {
-    const herbCount = Math.floor(seededRandom(cx, cz, 100) * 3) + 1;
+  private evaluateHerbivoreChunk(cx: number, cz: number, speciesId: string, herbivoreRoster: string[], requireSafe: boolean): SpawnPosition | null {
+    const totalNpcs = Math.floor(seededRandom(cx, cz, 100) * 4) + 1;
+    const numGroups = Math.max(1, Math.ceil(totalNpcs / 3));
 
-    for (let g = 0; g < herbCount; g++) {
+    for (let g = 0; g < numGroups; g++) {
       const speciesIdx = Math.floor(seededRandom(cx + g, cz + g, 200) * herbivoreRoster.length);
       if (herbivoreRoster[speciesIdx] !== speciesId) continue;
 
       const groupCenterX = cx * CHUNK_SIZE + seededRandom(cx + g, cz, 150) * CHUNK_SIZE;
-      const groupCenterZ = cz * CHUNK_SIZE + seededRandom(cx, cz + g, 150) * CHUNK_SIZE;
+      const groupCenterZ = cz * CHUNK_SIZE + seededRandom(cz, cx + g, 160) * CHUNK_SIZE;
 
       if (this.isAreaWater(groupCenterX, groupCenterZ)) continue;
-      if (this.hasCarnivoreNearby(cx, cz)) continue;
+      if (requireSafe && this.hasCarnivoreNearby(cx, cz)) continue;
 
-      return {
-        chunkX: cx,
-        chunkZ: cz,
-        worldX: groupCenterX + (seededRandom(cx, cz, 999) - 0.5) * 5,
-        worldZ: groupCenterZ + (seededRandom(cx, cz, 888) - 0.5) * 5,
-      };
+      // Spawna exatamente onde o primeiro NPC (i=0) deste grupo estaria
+      const offsetX = (seededRandom(cx, cz + g, 300) - 0.5) * 10;
+      const offsetZ = (seededRandom(cz, cx + g, 310) - 0.5) * 10;
+      const npcX = groupCenterX + offsetX;
+      const npcZ = groupCenterZ + offsetZ;
+
+      if (this.isAreaWater(npcX, npcZ)) continue;
+
+      return { chunkX: cx, chunkZ: cz, worldX: npcX, worldZ: npcZ };
     }
     return null;
   }
 
   private hasCarnivoreNearby(cx: number, cz: number): boolean {
-    for (let dx = -CARNIVORE_CHECK_RADIUS; dx <= CARNIVORE_CHECK_RADIUS; dx++) {
-      for (let dz = -CARNIVORE_CHECK_RADIUS; dz <= CARNIVORE_CHECK_RADIUS; dz++) {
-        if (seededRandom(cx + dx, cz + dz, 500) < 0.3) return true;
-      }
-    }
-    return false;
+    return seededRandom(cx, cz, 500) < 0.3;
   }
 
   private isAreaWater(worldX: number, worldZ: number): boolean {
