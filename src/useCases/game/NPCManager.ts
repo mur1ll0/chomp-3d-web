@@ -1,5 +1,5 @@
 import type { NPCData } from '../../domain/models/NPCDinosaur';
-import { getNPCScaleFactor } from '../../domain/models/NPCDinosaur';
+import { getNPCScaleFactor, calculateDamage } from '../../domain/models/NPCDinosaur';
 import { NPCState } from '../../domain/models/NPCState';
 import { DINOSAUR_ROSTER, type Diet } from '../../domain/models/DinosaurStats';
 import type { IBehaviorStrategy } from '../../domain/interfaces/IBehaviorStrategy';
@@ -7,7 +7,7 @@ import type { IRandomProvider } from '../../domain/interfaces/IRandomProvider';
 import { NpcBehaviorFactory } from '../../domain/strategies/factories/NpcBehaviorFactory';
 import { npcAttackNPC, npcAttackPlayer, updateCombatTimers } from './CombatSystem';
 import { PlayerPositionRef } from './PlayerPositionRef';
-import { calculateCarcassNutritionByLevel, calculateInteractRadius, isInInteractionRange } from '../../domain/services/DinosaurService';
+import { calculateBiteDamage, calculateCarcassNutritionByLevel, calculateInteractRadius, calculatePercentageDamage, isInInteractionRange } from '../../domain/services/DinosaurService';
 import type { IGameStateGateway } from './contracts/IGameStateGateway';
 import type { IWorldQueryGateway, WorldEdiblePoint, WorldObstacle } from './contracts/IWorldQueryGateway';
 import { NPCSpawnSystem } from './systems/NPCSpawnSystem';
@@ -20,6 +20,10 @@ const CHUNK_SIZE = 50;
 const SPAWN_RADIUS = 2;
 const DEFAULT_WORLD_SEED = 12345;
 
+// Lookup O(1) — evita Array.find() no hot path
+const dinoStatsMap: Record<string, import('../../domain/models/DinosaurStats').DinosaurStats> = {};
+for (const d of DINOSAUR_ROSTER) dinoStatsMap[d.id] = d;
+
 class NPCManagerClass {
   private npcs: Map<string, NPCData> = new Map();
   private spawnedChunks: Set<string> = new Set();
@@ -27,6 +31,7 @@ class NPCManagerClass {
   private strategyCache = new Map<Diet, IBehaviorStrategy>();
   private npcRandomCache = new Map<string, IRandomProvider>();
   private pendingDamageToPlayer = 0;
+  private pendingRemoteDamage = new Map<string, number>();
   private isAuthority = true;
   private gameStateGateway: IGameStateGateway | null = null;
   private worldQueryGateway: IWorldQueryGateway | null = null;
@@ -43,6 +48,9 @@ class NPCManagerClass {
   private lastCacheChunkX = NaN;
   private lastCacheChunkZ = NaN;
   private lastPlayerDeadState = false;
+
+  // Remote players (clients connected via network)
+  private remotePlayers: Array<{ id: string; posX: number; posZ: number; level: number; diet: Diet; scale: number; strength: number; collisionRadius: number; interactRadius: number }> = [];
 
   private playerSpawnX = 0;
   private playerSpawnZ = 0;
@@ -70,10 +78,12 @@ class NPCManagerClass {
 
   reset(): void {
     this.npcs.clear();
+    this.invalidateNpcCache();
     this.spawnedChunks.clear();
     this.strategyCache.clear();
     this.npcRandomCache.clear();
     this.pendingDamageToPlayer = 0;
+    this.pendingRemoteDamage.clear();
     this.hasPlayerSpawnPos = false;
     this.simulationTick = 0;
     this.lastCacheChunkX = NaN;
@@ -98,16 +108,141 @@ class NPCManagerClass {
     return this.npcRandomCache.get(npcId)!;
   }
 
+  private npcCacheDirty = false;
+
+  private invalidateNpcCache(): void {
+    this.npcCacheDirty = true;
+  }
+
   setAuthority(isAuthority: boolean): void {
     this.isAuthority = isAuthority;
   }
 
   getActiveNPCs(): NPCData[] {
-    return Array.from(this.npcs.values());
+    if (this.npcCacheDirty || !this.activeNPCsCache) {
+      this.activeNPCsCache = Array.from(this.npcs.values());
+      this.npcCacheDirty = false;
+    }
+    return this.activeNPCsCache;
+  }
+
+  // Cache fields
+  private activeNPCsCache: NPCData[] | null = null;
+
+  getSimulationTick(): number {
+    return this.simulationTick;
+  }
+
+  setRemotePlayers(
+    players: Array<{ id: string; posX: number; posZ: number; level: number; diet: Diet; scale: number; strength: number; collisionRadius: number; interactRadius: number }>
+  ): void {
+    this.remotePlayers = players;
+  }
+
+  getRemotePlayers(): typeof this.remotePlayers {
+    return this.remotePlayers;
   }
 
   getNPC(id: string): NPCData | undefined {
     return this.npcs.get(id);
+  }
+
+  /**
+   * Processa ataque de um cliente contra NPCs próximos.
+   * Usa os stats do cliente (não do host) para calcular raio de interação.
+   * Define huntingTargetId para o ID do cliente remoto que atacou.
+   */
+  processClientAttack(
+    posX: number, posZ: number,
+    level: number, strength: number,
+    interactRadius: number,
+    clientId: string
+  ): boolean {
+    const allNPCs = this.getActiveNPCs();
+    for (const target of allNPCs) {
+      if (target.state === NPCState.Dead) continue;
+
+      const targetStats = dinoStatsMap[target.speciesId];
+      if (!targetStats) continue;
+
+      const targetScale = getNPCScaleFactor(target.level, targetStats);
+      const targetRadius = targetStats.collisionRadius * targetScale;
+
+      if (!isInInteractionRange(posX, posZ, target.posX, target.posZ, interactRadius, targetRadius)) continue;
+
+      const damage = calculateDamage(strength, level);
+      target.health = Math.max(0, target.health - damage);
+      target.isHit = true;
+      target.hitTimer = 0.3;
+
+      if (target.diet === 'Carnivore') {
+        target.retaliatePlayerTimer = 6.0;
+      }
+      if (target.diet === 'Herbivore') {
+        target.retaliatePlayerPackTimer = 6.0;
+      }
+
+      target.huntingTargetId = clientId;
+      target.fleeFromId = null;
+      target.state = NPCState.Hunting;
+      target.animationIntent = 'Run';
+      target.stateTimer = 0;
+
+      const died = target.health <= 0;
+      if (died) {
+        target.state = NPCState.Dead;
+        target.animationIntent = 'Death';
+      }
+
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Processa ação de comer de um cliente contra um edible ou carcaça.
+   * Usa a posição do cliente (posX/posZ) para buscar edíveis próximos.
+   */
+  processClientEat(
+    targetId: string,
+    playerLevel: number,
+    playerStrength: number,
+    posX: number,
+    posZ: number
+  ): void {
+    if (!this.gameStateGateway) return;
+
+    const remaining = this.gameStateGateway.getEdibleRemaining(targetId);
+    if (remaining <= 0) return;
+
+    // Get initial size based on target type
+    let initialSize = 1.0;
+
+    if (targetId.startsWith('npc_')) {
+      const npc = this.npcs.get(targetId);
+      if (npc) {
+        initialSize = calculateCarcassNutritionByLevel(npc.level);
+      }
+    } else if (targetId === 'player_carcass') {
+      initialSize = calculateCarcassNutritionByLevel(PlayerPositionRef.level);
+    } else {
+      // Static edible: scale is the initial size — use client position, not host
+      const gateways = this.getGateways();
+      if (gateways) {
+        const worldQuery = gateways.worldQuery;
+        const nearby = worldQuery.getNearbyEdibles(posX, posZ, 1);
+        const target = nearby.find(e => e.id === targetId);
+        if (target) {
+          initialSize = target.scale;
+        }
+      }
+    }
+
+    const currentAbsoluteSize = initialSize * remaining;
+    const biteDamage = calculateBiteDamage(playerStrength, playerLevel);
+    const percentageDamage = calculatePercentageDamage(biteDamage, initialSize, currentAbsoluteSize);
+
+    this.gameStateGateway.damageEdible(targetId, percentageDamage);
   }
 
   consumePlayerDamage(): number {
@@ -116,21 +251,66 @@ class NPCManagerClass {
     return dmg;
   }
 
+  consumeRemoteDamage(clientId: string): number {
+    const dmg = this.pendingRemoteDamage.get(clientId) ?? 0;
+    if (dmg > 0) this.pendingRemoteDamage.delete(clientId);
+    return dmg;
+  }
+
+  hasPendingRemoteDamage(clientId: string): boolean {
+    return (this.pendingRemoteDamage.get(clientId) ?? 0) > 0;
+  }
+
   setNPCsFromNetwork(data: NPCData[]): void {
-    this.npcs.clear();
+    // Diff approach: update changed NPCs in-place, add new ones, remove stale ones
+    // This avoids frequent Map.clear + re-populate every frame
+    const incomingIds = new Set<string>();
+    let changed = false;
+
     for (const npc of data) {
-      this.npcs.set(npc.id, {
-        ...npc,
-        stamina: npc.stamina ?? 100,
-        maxStamina: npc.maxStamina ?? 100,
-        isExhausted: npc.isExhausted ?? false,
-        yVelocity: npc.yVelocity ?? 0,
-        isGrounded: npc.isGrounded ?? true,
-        jumpCooldown: npc.jumpCooldown ?? 0,
-        searchRotationAngle: npc.searchRotationAngle ?? 0,
-        searchTargetId: npc.searchTargetId ?? null,
-      });
+      incomingIds.add(npc.id);
+      const existing = this.npcs.get(npc.id);
+      if (!existing) {
+        this.npcs.set(npc.id, {
+          ...npc,
+          stamina: npc.stamina ?? 100,
+          maxStamina: npc.maxStamina ?? 100,
+          isExhausted: npc.isExhausted ?? false,
+          yVelocity: npc.yVelocity ?? 0,
+          isGrounded: npc.isGrounded ?? true,
+          jumpCooldown: npc.jumpCooldown ?? 0,
+          searchRotationAngle: npc.searchRotationAngle ?? 0,
+          searchTargetId: npc.searchTargetId ?? null,
+        });
+        changed = true;
+      } else if (
+        existing.posX !== npc.posX || existing.posZ !== npc.posZ ||
+        existing.rotY !== npc.rotY || existing.state !== npc.state ||
+        existing.health !== npc.health || existing.isHit !== npc.isHit ||
+        existing.animationIntent !== npc.animationIntent
+      ) {
+        // Update in-place to preserve object reference in cached arrays
+        Object.assign(existing, npc);
+        existing.stamina = npc.stamina ?? 100;
+        existing.maxStamina = npc.maxStamina ?? 100;
+        existing.isExhausted = npc.isExhausted ?? false;
+        existing.yVelocity = npc.yVelocity ?? 0;
+        existing.isGrounded = npc.isGrounded ?? true;
+        existing.jumpCooldown = npc.jumpCooldown ?? 0;
+        existing.searchRotationAngle = npc.searchRotationAngle ?? 0;
+        existing.searchTargetId = npc.searchTargetId ?? null;
+      }
     }
+
+    // Remove NPCs that disappeared from the snapshot
+    for (const [id] of this.npcs) {
+      if (!incomingIds.has(id)) {
+        this.npcs.delete(id);
+        changed = true;
+      }
+    }
+
+    if (changed) this.invalidateNpcCache();
   }
 
   update(
@@ -174,12 +354,40 @@ class NPCManagerClass {
       }
     }
 
+    // Spawn NPCs around remote players too (for P2P)
+    for (const rp of this.remotePlayers) {
+      if (rp.id.startsWith('client_')) {
+        const rpChunkX = Math.floor(rp.posX / CHUNK_SIZE);
+        const rpChunkZ = Math.floor(rp.posZ / CHUNK_SIZE);
+        for (let cx = -1; cx <= 1; cx++) {
+          for (let cz = -1; cz <= 1; cz++) {
+            this.spawnSystem.spawnNPCsForChunk({
+              chunkX: rpChunkX + cx,
+              chunkZ: rpChunkZ + cz,
+              npcs: this.npcs,
+              spawnedChunks: this.spawnedChunks,
+              hasPlayerSpawnPos: this.hasPlayerSpawnPos,
+              playerSpawnX: this.playerSpawnX,
+              playerSpawnZ: this.playerSpawnZ,
+              worldQuery,
+            });
+          }
+        }
+      }
+    }
+
     const despawnedIds = this.despawnSystem.despawnFarNPCs({
       npcs: this.npcs,
       spawnedChunks: this.spawnedChunks,
       playerChunkX,
       playerChunkZ,
+      remoteChunks: this.remotePlayers
+        .filter(rp => rp.id.startsWith('client_'))
+        .map(rp => ({ x: Math.floor(rp.posX / CHUNK_SIZE), z: Math.floor(rp.posZ / CHUNK_SIZE) })),
     });
+
+    // Invalida cache depois de spawn/despawn (pode ter adicionado/removido NPCs)
+    this.invalidateNpcCache();
 
     // Limpar recursos de NPCs despawnados
     for (const id of despawnedIds) {
@@ -190,9 +398,28 @@ class NPCManagerClass {
     const playerDeathStateChanged = PlayerPositionRef.isDead !== this.lastPlayerDeadState;
 
     // Cache de obstáculos/edibles é rebuild ao trocar de chunk ou quando player morre/ressuscita.
+    // Também inclui areas de remote players para que NPCs simulados perto deles tenham dados corretos.
     if (playerChunkX !== this.lastCacheChunkX || playerChunkZ !== this.lastCacheChunkZ || playerDeathStateChanged) {
       this.edibleCache = this.getEdiblePositions(playerX, playerZ, gameState, worldQuery);
       this.obstacleCache = worldQuery.getNearbyObstacles(playerX, playerZ, SPAWN_RADIUS + 1);
+
+      // Merge edibles/obstacles from remote player areas
+      for (const rp of this.remotePlayers) {
+        if (!rp.id.startsWith('client_')) continue;
+        const rpObstacles = worldQuery.getNearbyObstacles(rp.posX, rp.posZ, 2);
+        for (const obs of rpObstacles) {
+          if (!this.obstacleCache.some(o => o.x === obs.x && o.z === obs.z)) {
+            this.obstacleCache.push(obs);
+          }
+        }
+        const rpEdibles = this.getEdiblePositions(rp.posX, rp.posZ, gameState, worldQuery);
+        for (const ed of rpEdibles) {
+          if (!this.edibleCache.some(e => e.id === ed.id)) {
+            this.edibleCache.push(ed);
+          }
+        }
+      }
+
       this.lastCacheChunkX = playerChunkX;
       this.lastCacheChunkZ = playerChunkZ;
       this.lastPlayerDeadState = PlayerPositionRef.isDead;
@@ -226,11 +453,12 @@ class NPCManagerClass {
         const remaining = gameState.getEdibleRemaining(npc.id);
         if (remaining <= 0) {
           this.npcs.delete(npc.id);
+          this.invalidateNpcCache();
         }
         continue;
       }
 
-      const stats = DINOSAUR_ROSTER.find(d => d.id === npc.speciesId);
+      const stats = dinoStatsMap[npc.speciesId];
       if (!stats) continue;
 
       const strategy = this.getStrategyForNPC(npc);
@@ -286,9 +514,25 @@ class NPCManagerClass {
             continue;
           }
           if (npc.state === NPCState.Attacking) {
-            // Timer expirou — não força Wandering; o FSM decide
-            // se retoma perseguição (alvo visível), busca (perdeu vista)
-            // ou vagueia (sem alvo).
+            // Timer expirou — intercepta para client-target antes do FSM decidir
+            if (npc.huntingTargetId?.startsWith('client_')) {
+              const rp = this.remotePlayers.find(r => r.id === npc.huntingTargetId);
+              if (rp) {
+                // Cliente remoto ainda conectado — volta a perseguir
+                npc.state = NPCState.Hunting;
+                npc.animationIntent = 'Run';
+                npc.targetX = rp.posX;
+                npc.targetZ = rp.posZ;
+              } else {
+                // Cliente desconectou — volta a vagar
+                npc.state = NPCState.Wandering;
+                npc.huntingTargetId = null;
+                npc.animationIntent = 'Idle';
+              }
+              npc.stateTimer = 0;
+              continue;
+            }
+            // Não força Wandering; o FSM decide
             npc.stateTimer = 0;
           } else {
             npc.stateTimer = 0;
@@ -327,7 +571,9 @@ class NPCManagerClass {
         obstacles: this.obstacleCache,
       });
 
-      if (!PlayerPositionRef.isDead && npc.state === NPCState.Hunting && npc.attackCooldown <= 0 && strategy.combatPolicy.shouldAttackPlayer(npc, playerLevel, playerDiet)) {
+      // Skip host attack check if NPC is hunting a specific remote player
+      const isHuntingRemote = npc.huntingTargetId?.startsWith('client_');
+      if (!isHuntingRemote && !PlayerPositionRef.isDead && npc.state === NPCState.Hunting && npc.attackCooldown <= 0 && strategy.combatPolicy.shouldAttackPlayer(npc, playerLevel, playerDiet)) {
         const npcScale = getNPCScaleFactor(npc.level, stats);
         const interactRadius = calculateInteractRadius(stats.interactRadius, npcScale);
         const targetRadius = PlayerPositionRef.collisionRadius * PlayerPositionRef.scale;
@@ -346,6 +592,41 @@ class NPCManagerClass {
           if (!strategy.combatPolicy.canAttackNpcTarget(npc, target)) continue;
           npcAttackNPC(npc, target);
           if (npc.attackCooldown > 0) break;
+        }
+      }
+
+      // NPC vs Remote Player (clients conectados via rede)
+      if (!npc.isExhausted && npc.state === NPCState.Hunting && npc.attackCooldown <= 0) {
+        const npcScale = getNPCScaleFactor(npc.level, stats);
+        const nInteractRadius = calculateInteractRadius(stats.interactRadius, npcScale);
+        for (const rp of this.remotePlayers) {
+          if (rp.id === 'host') continue;
+          // If NPC is hunting a specific remote player, only attack that one
+          if (npc.huntingTargetId?.startsWith('client_') && npc.huntingTargetId !== rp.id) continue;
+          const targetRadius = rp.collisionRadius * rp.scale;
+          if (isInInteractionRange(npc.posX, npc.posZ, rp.posX, rp.posZ, nInteractRadius, targetRadius)) {
+            const dmg = npcAttackPlayer(npc, rp.posX, rp.posZ, rp.scale);
+            if (dmg > 0) {
+              const existing = this.pendingRemoteDamage.get(rp.id) ?? 0;
+              this.pendingRemoteDamage.set(rp.id, existing + dmg);
+              break;
+            }
+          }
+        }
+      }
+
+      // Post-processing: resolve movement target for client-hunting NPCs
+      // (the FSM doesn't understand 'client_' prefix, so we re-target here)
+      if (npc.huntingTargetId?.startsWith('client_')) {
+        const rp = this.remotePlayers.find(r => r.id === npc.huntingTargetId);
+        if (rp) {
+          npc.targetX = rp.posX;
+          npc.targetZ = rp.posZ;
+        } else {
+          // Remote player disconnected — go back to wandering
+          npc.huntingTargetId = null;
+          npc.state = NPCState.Wandering;
+          npc.animationIntent = 'Idle';
         }
       }
     }
@@ -388,7 +669,7 @@ class NPCManagerClass {
       if (npc.state === NPCState.Dead) {
         const remaining = gameState.getEdibleRemaining(npc.id);
         if (remaining > 0) {
-          const stats = DINOSAUR_ROSTER.find(d => d.id === npc.speciesId);
+          const stats = dinoStatsMap[npc.speciesId];
           const baseScale = stats ? getNPCScaleFactor(npc.level, stats) : 1.0;
 
           result.push({

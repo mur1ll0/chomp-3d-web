@@ -1,7 +1,11 @@
 import { calculateDamage, getNPCScaleFactor } from '../../domain/models/NPCDinosaur';
 import type { NPCData } from '../../domain/models/NPCDinosaur';
-import { DINOSAUR_ROSTER } from '../../domain/models/DinosaurStats';
+import { DINOSAUR_ROSTER, type DinosaurStats } from '../../domain/models/DinosaurStats';
 import { NPCState } from '../../domain/models/NPCState';
+
+// Lookup O(1) — evita Array.find() no hot path do combate
+const dinoStatsMap: Record<string, DinosaurStats> = {};
+for (const d of DINOSAUR_ROSTER) dinoStatsMap[d.id] = d;
 import { PlayerPositionRef } from './PlayerPositionRef';
 import { calculateInteractRadius, isInInteractionRange } from '../../domain/services/DinosaurService';
 
@@ -45,12 +49,12 @@ export function npcAttackNPC(
   if (attacker.attackCooldown > 0) return null;
   if (target.state === NPCState.Dead) return null;
 
-  const attackerStats = DINOSAUR_ROSTER.find(d => d.id === attacker.speciesId);
+  const attackerStats = dinoStatsMap[attacker.speciesId];
   if (!attackerStats) return null;
 
   // Verifica colisão (bounding spheres) usando raio de interação
   const attackerScale = getNPCScaleFactor(attacker.level, attackerStats);
-  const targetStats = DINOSAUR_ROSTER.find(d => d.id === target.speciesId);
+  const targetStats = dinoStatsMap[target.speciesId];
   if (!targetStats) return null;
   const targetScale = getNPCScaleFactor(target.level, targetStats);
 
@@ -102,7 +106,7 @@ export function npcAttackPlayer(
   if (attacker.state === NPCState.Dead) return 0;
   if (PlayerPositionRef.isDead) return 0;
 
-  const attackerStats = DINOSAUR_ROSTER.find(d => d.id === attacker.speciesId);
+  const attackerStats = dinoStatsMap[attacker.speciesId];
   if (!attackerStats) return 0;
 
   const attackerScale = getNPCScaleFactor(attacker.level, attackerStats);
@@ -140,7 +144,7 @@ export function playerAttackNPC(
 ): CombatEvent | null {
   if (target.state === NPCState.Dead) return null;
 
-  const targetStats = DINOSAUR_ROSTER.find(d => d.id === target.speciesId);
+  const targetStats = dinoStatsMap[target.speciesId];
   if (!targetStats) return null;
   const targetScale = getNPCScaleFactor(target.level, targetStats);
 

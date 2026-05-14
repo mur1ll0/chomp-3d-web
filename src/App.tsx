@@ -2,6 +2,7 @@ import { useAppStore } from './store/useAppStore';
 import { MainMenu } from './presentation/screens/MainMenu';
 import { SettingsMenu } from './presentation/screens/SettingsMenu';
 import { CharacterSelectionMenu } from './presentation/screens/CharacterSelectionMenu';
+import { SessionSelectScreen } from './presentation/screens/SessionSelectScreen';
 import { GameScreen } from './presentation/screens/GameScreen';
 
 function App() {
@@ -11,6 +12,7 @@ function App() {
     <>
       {currentScreen === 'menu' && <MainMenu />}
       {currentScreen === 'settings' && <SettingsMenu />}
+      {currentScreen === 'session-select' && <SessionSelectScreen />}
       {currentScreen === 'character-select' && <CharacterSelectionMenu />}
       {currentScreen === 'game' && <GameScreen />}
     </>

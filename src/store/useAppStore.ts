@@ -1,7 +1,9 @@
 import { create } from 'zustand';
 
-export type Screen = 'menu' | 'character-select' | 'settings' | 'game';
+export type Screen = 'menu' | 'character-select' | 'settings' | 'game' | 'session-select';
 export type GameMode = 'online' | 'offline' | null;
+export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
+export type OnlineRole = 'host' | 'client' | null;
 
 export type ControlAction =
   | 'moveForward'
@@ -100,6 +102,15 @@ interface AppState {
   foodEaten: number; // total units of food eaten
   debugZoomUnlocked: boolean;
 
+  // Multiplayer State
+  sessionCode: string;
+  connectionStatus: ConnectionStatus;
+  onlineRole: OnlineRole;
+  connectedPlayers: string[];
+  networkNPCs: unknown[];
+  networkPlayers: unknown[];
+  networkTick: number;
+
   // Actions
   setScreen: (screen: Screen) => void;
   setGameMode: (mode: GameMode) => void;
@@ -130,6 +141,11 @@ interface AppState {
   resetGameStats: () => void;
   setLevel: (level: number) => void;
   setDebugZoomUnlocked: (v: boolean) => void;
+  setSessionCode: (code: string) => void;
+  setConnectionStatus: (status: ConnectionStatus) => void;
+  setOnlineRole: (role: OnlineRole) => void;
+  setConnectedPlayers: (players: string[]) => void;
+  setNetworkData: (npcs: unknown[], players: unknown[], tick: number, edibleStates?: Record<string, number>) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -166,6 +182,15 @@ export const useAppStore = create<AppState>((set) => ({
   timeAlive: 0,
   foodEaten: 0,
   debugZoomUnlocked: false,
+
+  // Multiplayer
+  sessionCode: '',
+  connectionStatus: 'disconnected',
+  onlineRole: null,
+  connectedPlayers: [],
+  networkNPCs: [],
+  networkPlayers: [],
+  networkTick: 0,
 
   setScreen: (screen) => set({ currentScreen: screen }),
   setGameMode: (mode) => set({ gameMode: mode }),
@@ -388,5 +413,24 @@ export const useAppStore = create<AppState>((set) => ({
     edibleStates: {}, edibleGrowthLocks: {}, interactableEdibleId: null
   }),
   setLevel: (level) => set({ level: Math.max(1, level) }),
-  setDebugZoomUnlocked: (v) => set({ debugZoomUnlocked: v })
+  setDebugZoomUnlocked: (v) => set({ debugZoomUnlocked: v }),
+  setSessionCode: (code) => set({ sessionCode: code }),
+  setConnectionStatus: (status) => set({ connectionStatus: status }),
+  setOnlineRole: (role) => set({ onlineRole: role }),
+  setConnectedPlayers: (players) => set({ connectedPlayers: players }),
+  setNetworkData: (npcs, players, tick, edibleStates) => set((state) => {
+    const update: Partial<AppState> = { networkNPCs: npcs, networkPlayers: players, networkTick: tick };
+    if (edibleStates) {
+      // Merge edible states from host — client doesn't have authority to override local
+      // ones, but needs to reflect what host sees for visual sync.
+      update.edibleStates = { ...state.edibleStates, ...edibleStates };
+      // Also respawn timers: if host says something is gone, mark it
+      for (const id in edibleStates) {
+        if (edibleStates[id] <= 0) {
+          update.edibleStates = { ...update.edibleStates!, [id]: 0 };
+        }
+      }
+    }
+    return update;
+  }),
 }));

@@ -90,7 +90,7 @@ export const DebugPanel: React.FC = () => {
       style={{
       position: 'absolute',
       top: '85px',
-      right: '16px',
+      left: '16px',
       backgroundColor: 'rgba(0, 0, 0, 0.7)',
       color: '#00ff00',
       padding: '15px',

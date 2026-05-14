@@ -1,7 +1,8 @@
-import React, { useState, Suspense, startTransition } from 'react';
+import React, { useState, Suspense, startTransition, useCallback } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { DINOSAUR_ROSTER, type Diet } from '../../domain/models/DinosaurStats';
 import { ArrowLeft, Play, Loader2 } from 'lucide-react';
+import { peerSession } from '../../infrastructure/network/PeerSession';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Center, Environment, useGLTF, Bounds } from '@react-three/drei';
 import * as THREE from 'three';
@@ -159,9 +160,11 @@ const DinosaurConfiguratorUI = ({ modelPath }: { modelPath: string }) => {
 
 export const CharacterSelectionMenu: React.FC = () => {
   const { 
-    gameMode, setScreen, 
+    gameMode, setScreen, setGameMode,
     playerName, setPlayerName, 
-    selectedDinoId, setSelectedDinoId
+    selectedDinoId, setSelectedDinoId,
+    onlineRole, setOnlineRole,
+    sessionCode, setSessionCode
   } = useAppStore();
 
   const [dietFilter, setDietFilter] = useState<Diet>('Carnivore');
@@ -175,12 +178,43 @@ export const CharacterSelectionMenu: React.FC = () => {
     });
   };
 
-  const handleStartGame = () => {
+  const handleStartGame = useCallback(async () => {
     if (gameMode === 'online' && !playerName.trim()) {
       alert("Por favor, insira um nome para o modo online.");
       return;
     }
+
+    if (gameMode === 'online') {
+      try {
+        if (onlineRole === 'host') {
+          peerSession.regenerateSessionCode();
+          await peerSession.startHost();
+          setSessionCode(peerSession.getSessionCode());
+        } else if (onlineRole === 'client' && sessionCode) {
+          await peerSession.joinSession(sessionCode, {
+            playerName,
+            dinoId: selectedDinoId,
+            dinoColors: useAppStore.getState().dinoColors,
+          });
+        }
+      } catch {
+        alert('Erro ao conectar. Verifique o código e tente novamente.');
+        return;
+      }
+    }
+
     setScreen('game');
+  }, [gameMode, playerName, onlineRole, sessionCode, selectedDinoId, setSessionCode, setScreen]);
+
+  const handleBack = () => {
+    if (gameMode === 'online') {
+      setOnlineRole(null);
+      setSessionCode('');
+      setGameMode('online');
+      setScreen('session-select');
+    } else {
+      setScreen('menu');
+    }
   };
 
   return (
@@ -191,7 +225,7 @@ export const CharacterSelectionMenu: React.FC = () => {
         <div className="flex-1 flex flex-col gap-6">
           <div className="flex items-center gap-4">
             <button 
-              onClick={() => setScreen('menu')}
+              onClick={handleBack}
               className="p-2 hover:bg-slate-700 rounded-full transition-colors"
             >
               <ArrowLeft className="w-6 h-6 text-slate-300" />
@@ -201,7 +235,7 @@ export const CharacterSelectionMenu: React.FC = () => {
 
           {gameMode === 'online' && (
             <div className="space-y-2">
-              <label className="block text-sm font-medium text-slate-400">Nome do Jogador (ID da Sessão)</label>
+              <label className="block text-sm font-medium text-slate-400">Nome do Jogador</label>
               <input 
                 type="text" 
                 value={playerName}
@@ -210,6 +244,14 @@ export const CharacterSelectionMenu: React.FC = () => {
                 className="w-full bg-slate-700/50 border border-slate-600 rounded-lg p-3 text-white focus:outline-none focus:border-orange-500 transition-colors"
                 maxLength={15}
               />
+            </div>
+          )}
+
+          {gameMode === 'online' && onlineRole === 'host' && (
+            <div className="bg-slate-900/80 border border-orange-500/40 rounded-xl p-4 text-center">
+              <div className="text-xs text-slate-400 uppercase tracking-wider mb-1">Código da Sala</div>
+              <div className="text-3xl font-black text-orange-400 tracking-[0.3em]">{sessionCode || '---'}</div>
+              <div className="text-[10px] text-slate-500 mt-1">Compartilhe este código com outros jogadores</div>
             </div>
           )}
 

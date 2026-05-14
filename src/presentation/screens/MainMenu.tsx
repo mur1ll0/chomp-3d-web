@@ -19,7 +19,7 @@ export const MainMenu: React.FC = () => {
           <button
             onClick={() => {
               setGameMode('online');
-              setScreen('character-select');
+              setScreen('session-select');
             }}
             className="group relative w-full flex items-center justify-center gap-3 bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-400 hover:to-red-500 text-white font-bold py-4 px-6 rounded-xl shadow-lg hover:shadow-orange-500/25 transition-all active:scale-95 overflow-hidden"
           >

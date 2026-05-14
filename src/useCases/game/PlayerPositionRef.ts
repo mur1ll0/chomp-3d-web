@@ -20,6 +20,7 @@ export const PlayerPositionRef = {
   diet: 'Carnivore' as Diet,
   strength: 5,
   isDead: false,
+  animationIntent: 'Idle',
   collisionRadius: 2.0, // Default base values
   collisionHeight: 8.0,
   interactRadius: 5.0,
