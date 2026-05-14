@@ -1,32 +1,31 @@
-import React, { useRef, useMemo, useState, useEffect } from 'react';
+import React, { useRef, useMemo, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Text, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { DINOSAUR_ROSTER } from '../../domain/models/DinosaurStats';
 import { getNPCScaleFactor } from '../../domain/models/NPCDinosaur';
 import { useAppStore } from '../../store/useAppStore';
-import type { PlayerStateSnapshot } from '../../infrastructure/network/messages';
-import { peerSession } from '../../infrastructure/network/PeerSession';
+import { PeerMesh } from '../../infrastructure/network/PeerMesh';
 import { cloneSkinnedMesh } from '../utils/ThreeUtils';
 import { useDinosaurAnimations } from '../hooks/useDinosaurAnimations';
+import type { PlayerStateMessage } from '../../infrastructure/network/messages';
 
 const _tempPos = new THREE.Vector3();
 
 const ONESHOT_INTENTS = new Set(['Attack', 'Eat', 'Death']);
 
-const RemotePlayerInstance: React.FC<{ player: PlayerStateSnapshot }> = ({ player }) => {
-  const stats = useMemo(() => DINOSAUR_ROSTER.find(d => d.id === player.dinoId)!, [player.dinoId]);
+const RemotePlayerInstance: React.FC<{ state: PlayerStateMessage; name: string; dinoId: string }> = ({ state, name, dinoId }) => {
+  const stats = useMemo(() => DINOSAUR_ROSTER.find(d => d.id === dinoId) ?? DINOSAUR_ROSTER[0], [dinoId]);
   const gltf = useGLTF(stats.modelPath);
   const groupRef = useRef<THREE.Group>(null);
-  const playerRef = useRef(player);
+  const stateRef = useRef(state);
   const prevAnimIntent = useRef('');
 
-  // Keep playerRef in sync outside render cycle for useFrame access
   useEffect(() => {
-    playerRef.current = player;
-  }, [player]);
+    stateRef.current = state;
+  }, [state]);
 
-  const { clonedScene, cachedMaterials } = useMemo(() => {
+  const { clonedScene } = useMemo(() => {
     const clone = cloneSkinnedMesh(gltf.scene);
     const mats: THREE.MeshStandardMaterial[] = [];
     clone.position.set(0, 0, 0);
@@ -42,69 +41,43 @@ const RemotePlayerInstance: React.FC<{ player: PlayerStateSnapshot }> = ({ playe
         mesh.receiveShadow = true;
         if (mesh.material && !Array.isArray(mesh.material)) {
           const mat = (mesh.material as THREE.MeshStandardMaterial).clone();
-          mat.userData.originalColor = mat.color.clone();
           mats.push(mat);
           mesh.material = mat;
         }
       }
     });
-    return { clonedScene: clone, cachedMaterials: mats };
+    return { clonedScene: clone };
   }, [gltf.scene]);
-
-  // Apply dinoColors from snapshot to the model
-  useEffect(() => {
-    const p = playerRef.current;
-    if (!cachedMaterials.length || !p.dinoColors) return;
-    const colors = p.dinoColors;
-    if (typeof colors === 'object' && Object.keys(colors).length > 0) {
-      cachedMaterials.forEach(mat => {
-        const matName = mat.name || '';
-        if (colors[matName]) {
-          mat.color.set(colors[matName]);
-        } else {
-          mat.color.copy(mat.userData.originalColor);
-        }
-      });
-    }
-  }, [cachedMaterials, player.dinoId, player.dinoColors]);
 
   const { playAnimation } = useDinosaurAnimations(gltf, clonedScene);
 
   useFrame((_, delta) => {
     if (!groupRef.current) return;
-    const p = playerRef.current;
-    // Match NPCInstance rendering approach: Euler angle lerp (not quaternion slerp)
+    const s = stateRef.current;
     const interp = Math.min(1, delta * 12);
 
-    // Position lerp
-    groupRef.current.position.lerp(_tempPos.set(p.posX, p.posY, p.posZ), interp);
+    groupRef.current.position.lerp(_tempPos.set(s.posX, s.posY ?? 0, s.posZ), interp);
 
-    // Rotation: Euler angle lerp (identical to NPCInstance in NPCDinosaurs.tsx)
-    let angleDiff = p.rotY - groupRef.current.rotation.y;
+    let angleDiff = s.rotY - groupRef.current.rotation.y;
     while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
     while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
     groupRef.current.rotation.y += angleDiff * interp;
 
     groupRef.current.updateMatrixWorld();
 
-    // Animation: detect one-shot transitions (Attack, Eat, Death)
-    const intent = p.animationIntent || 'Idle';
+    const intent = s.animationIntent || 'Idle';
     const isOneShot = ONESHOT_INTENTS.has(intent);
     const intentChanged = intent !== prevAnimIntent.current;
     prevAnimIntent.current = intent;
 
     if (isOneShot) {
-      // One-shots: play without loop, restart when intent changes
-      if (intentChanged) {
-        playAnimation(intent, false);
-      }
+      if (intentChanged) playAnimation(intent, false);
     } else {
-      // Looping animations (Idle, Walk, Run)
       playAnimation(intent, true);
     }
   });
 
-  const currentScale = getNPCScaleFactor(player.level, stats);
+  const currentScale = getNPCScaleFactor(state.level ?? 1, stats);
 
   return (
     <group ref={groupRef}>
@@ -120,45 +93,42 @@ const RemotePlayerInstance: React.FC<{ player: PlayerStateSnapshot }> = ({ playe
         outlineColor="#000000"
         outlineWidth={0.025}
       >
-        {player.name}
+        {name}
       </Text>
     </group>
   );
 };
 
 export const RemotePlayers: React.FC = () => {
-  const onlineRole = useAppStore(s => s.onlineRole);
-  const networkPlayers = useAppStore(s => s.networkPlayers) as import('../../infrastructure/network/messages').PlayerStateSnapshot[];
-  const myPlayerName = useAppStore(s => s.playerName);
-  const [hostPlayers, setHostPlayers] = useState<PlayerStateSnapshot[]>([]);
+  const gameMode = useAppStore(s => s.gameMode);
 
-  // Host: polls PeerHost's client states (snapshot broadcast is the sync mechanism)
-  useEffect(() => {
-    if (onlineRole !== 'host') return;
-    const update = () => {
-      const states = peerSession.getHostPlayerStates();
-      setHostPlayers(states);
-    };
-    update();
-    const interval = setInterval(update, 150); // 150ms ≈ cada broadcast
-    peerSession.setOnClientConnected(update as (clientId: string, name: string) => void);
-    peerSession.setOnClientDisconnected(update as (clientId: string) => void);
-    return () => {
-      clearInterval(interval);
-      peerSession.setOnClientConnected(null!);
-      peerSession.setOnClientDisconnected(null!);
-    };
-  }, [onlineRole]);
+  if (gameMode === 'single' || gameMode === null) return null;
 
-  const players = onlineRole === 'host' ? hostPlayers : networkPlayers;
-  const others = players.filter(p => p.name !== myPlayerName && (onlineRole !== 'host' || p.id !== 'host'));
-  if (others.length === 0) return null;
+  const remoteStates = PeerMesh.getRemotePlayerStates();
+  const connectedPeers = PeerMesh.getConnectedPeers();
+  const ownPeerId = PeerMesh.getOwnPeerId();
+
+  const peerInfoMap = new Map<string, string>();
+  for (const p of connectedPeers) {
+    peerInfoMap.set(p.peerId, p.dinoId);
+  }
+
+  const entries: Array<{ state: PlayerStateMessage; name: string; dinoId: string; id: string }> = [];
+  for (const [peerId, state] of remoteStates) {
+    if (peerId === ownPeerId) continue;
+    const info = connectedPeers.find(p => p.peerId === peerId);
+    const displayName = info?.playerName ?? peerId;
+    const dinoId = peerInfoMap.get(peerId) ?? 'Velociraptor';
+    entries.push({ state, name: displayName, dinoId, id: peerId });
+  }
+
+  if (entries.length === 0) return null;
 
   return (
     <group>
-      {others.map(p => (
-        <React.Suspense key={p.id} fallback={null}>
-          <RemotePlayerInstance player={p} />
+      {entries.map(e => (
+        <React.Suspense key={e.id} fallback={null}>
+          <RemotePlayerInstance state={e.state} name={e.name} dinoId={e.dinoId} />
         </React.Suspense>
       ))}
     </group>

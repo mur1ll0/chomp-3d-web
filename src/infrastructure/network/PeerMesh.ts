@@ -2,6 +2,7 @@ import Peer from 'peerjs';
 import type { DataConnection } from 'peerjs';
 import { EventBus, type GameEvent } from './EventBus';
 import { ChunkInterestManager, worldToChunk } from './ChunkInterestManager';
+import { SignalingClient, type PeerListEntry } from './SignalingClient';
 import type {
   PeerHandshakeMessage,
   PeerHandshakeAckMessage,
@@ -63,6 +64,7 @@ class PeerMeshClass {
   private _onPeerListChanged: ((peers: PeerInfo[]) => void) | null = null;
   private _isFirstPeer = false;
   private _remotePlayerStates = new Map<string, PlayerStateMessage>();
+  private _signalingClient: SignalingClient | null = null;
 
   // ── Lifecycle ──
 
@@ -88,6 +90,66 @@ class PeerMeshClass {
     this._startHeartbeat();
   }
 
+  async startGlobal(signalingUrl: string): Promise<void> {
+    this._mode = 'global';
+    this._sessionCode = '';
+
+    await this._createPeer(generatePeerId());
+    EventBus.setOwnPeerId(this._ownPeerId);
+
+    this._signalingClient = new SignalingClient(signalingUrl);
+
+    this._signalingClient.onWelcome = (_peerId, count) => {
+      useAppStore.getState().setConnectionStatus('connected');
+      useAppStore.getState().setGlobalPlayerCount(count);
+    };
+
+    this._signalingClient.onPeerList = (peers) => {
+      this._connectToInterestPeers(peers);
+    };
+
+    this._signalingClient.onPeerJoined = (peer) => {
+      if (this._isInInterestZone(peer)) {
+        this._connectToRemotePeer(peer.peerId, peer);
+      }
+    };
+
+    this._signalingClient.onPeerLeft = (peerId) => {
+      this._onPeerDisconnected(peerId);
+    };
+
+    this._signalingClient.onPeerChunkUpdate = (peerId, cx, cz) => {
+      const info = this._peerInfo.get(peerId);
+      if (info) {
+        info.chunkX = cx;
+        info.chunkZ = cz;
+      }
+      if (this._chunkInterest) {
+        this._chunkInterest.updatePeerChunk(peerId, cx, cz);
+      }
+    };
+
+    this._signalingClient.onDisconnected = () => {
+      useAppStore.getState().setConnectionStatus('disconnected');
+    };
+
+    await this._signalingClient.connect();
+
+    this._signalingClient.sendJoin(
+      this._ownPeerId,
+      this._playerName,
+      this._dinoId,
+      this._colors,
+      useAppStore.getState().renderDistance
+    );
+
+    // Registra chunk do jogador no signaling
+    const chunk = worldToChunk(0, 0);
+    this._signalingClient.sendChunkUpdate(chunk.x, chunk.z);
+
+    this._startHeartbeat();
+  }
+
   async destroy(): Promise<void> {
     this._stopHeartbeat();
     EventBus.clear();
@@ -102,6 +164,11 @@ class PeerMeshClass {
     if (this._ownPeer) {
       this._ownPeer.destroy();
       this._ownPeer = null;
+    }
+
+    if (this._signalingClient) {
+      this._signalingClient.disconnect();
+      this._signalingClient = null;
     }
 
     this._ownPeerId = 'local';
@@ -481,6 +548,108 @@ class PeerMeshClass {
       },
     });
     this.broadcastEvent(event);
+
+    // Em modo Global, notifica o signaling server
+    if (this._mode === 'global' && this._signalingClient) {
+      this._signalingClient.sendChunkUpdate(newPos.x, newPos.z);
+    }
+  }
+
+  // ── Global Mode Helpers ──
+
+  private _isInInterestZone(peer: { chunkX: number; chunkZ: number; renderDistance?: number }): boolean {
+    const myChunk = this._chunkInterest?.playerChunk ?? { x: 0, z: 0 };
+    const dist = Math.abs(peer.chunkX - myChunk.x) + Math.abs(peer.chunkZ - myChunk.z);
+    const myRadius = this._chunkInterest?.interestRadius ?? 2;
+    const peerRadius = peer.renderDistance ?? 2;
+    return dist <= myRadius || dist <= peerRadius;
+  }
+
+  private _connectToInterestPeers(peers: PeerListEntry[]): void {
+    const candidates = peers.filter(p => {
+      if (p.peerId === this._ownPeerId) return false;
+      if (this._connections.has(p.peerId)) return false;
+      return this._isInInterestZone(p);
+    });
+
+    // Ordena por distância (mais próximos primeiro)
+    const myChunk = this._chunkInterest?.playerChunk ?? { x: 0, z: 0 };
+    candidates.sort((a, b) => {
+      const da = Math.abs(a.chunkX - myChunk.x) + Math.abs(a.chunkZ - myChunk.z);
+      const db = Math.abs(b.chunkX - myChunk.x) + Math.abs(b.chunkZ - myChunk.z);
+      return da - db;
+    });
+
+    // Hard cap: max 30 conexões
+    const toConnect = candidates.slice(0, 30);
+
+    for (const peer of toConnect) {
+      this._connectToRemotePeer(peer.peerId, peer);
+    }
+  }
+
+  private _connectToRemotePeer(peerId: string, info: { playerName: string; dinoId: string; chunkX: number; chunkZ: number }): void {
+    if (this._connections.has(peerId)) return;
+    if (peerId === this._ownPeerId) return;
+    if (!this._ownPeer) return;
+
+    this._peerInfo.set(peerId, {
+      id: peerId,
+      peerId,
+      playerName: info.playerName,
+      dinoId: info.dinoId,
+      colors: {},
+      chunkX: info.chunkX,
+      chunkZ: info.chunkZ,
+      connectedAt: Date.now(),
+    });
+
+    const conn = this._ownPeer.connect(peerId, { reliable: true });
+
+    conn.on('open', () => {
+      this._connections.set(peerId, conn);
+      this._lastPeerHeartbeat.set(peerId, Date.now());
+      const chunk = worldToChunk(0, 0);
+      const hs: PeerHandshakeMessage = {
+        type: 'peer_handshake',
+        peerId: this._ownPeerId,
+        playerName: this._playerName,
+        dinoId: this._dinoId,
+        colors: this._colors,
+        chunkX: chunk.x,
+        chunkZ: chunk.z,
+        tick: 0,
+      };
+      this._sendToPeer(peerId, hs);
+    });
+
+    conn.on('data', (raw) => {
+      this._handleMessage(peerId, raw as PeerMeshMessage);
+    });
+
+    conn.on('error', () => this._onPeerDisconnected(peerId));
+    conn.on('close', () => this._onPeerDisconnected(peerId));
+  }
+
+  reconcileConnections(): void {
+    // Reavalia conexões após mudança de renderDistance
+    if (!this._chunkInterest) return;
+
+    const peerIds = Array.from(this._peerInfo.keys());
+    for (const pid of peerIds) {
+      const info = this._peerInfo.get(pid);
+      if (!info) continue;
+      if (!this._isInInterestZone({ chunkX: info.chunkX, chunkZ: info.chunkZ })) {
+        this._onPeerDisconnected(pid);
+      }
+    }
+
+    // Notifica signaling sobre a mudança de renderDistance
+    if (this._signalingClient) {
+      this._signalingClient.sendRenderDistanceUpdate(
+        useAppStore.getState().renderDistance
+      );
+    }
   }
 
   // ── Heartbeat ──

@@ -17,6 +17,7 @@ import { calculateFinalScale, calculateInteractRadius, calculateBiteDamage, calc
 import { useDinosaurAnimations } from '../hooks/useDinosaurAnimations';
 import { cloneSkinnedMesh } from '../utils/ThreeUtils';
 import { peerSession } from '../../infrastructure/network/PeerSession';
+import { PeerMesh } from '../../infrastructure/network/PeerMesh';
 import { SpawnResolver } from '../../useCases/game/SpawnResolver';
 import { PackCodec } from '../../useCases/game/PackCodec';
 import { WORLD_SEED } from '../../infrastructure/generation/MapGenerator';
@@ -712,6 +713,24 @@ export const PlayerDinosaur: React.FC = () => {
 
     // Client online: envia posição/estado para o host
     sendClientInput(false, false, moving, isRunning);
+
+    // PeerMesh (Party/Global): envia estado para renderização remota
+    const pmGameMode = useAppStore.getState().gameMode;
+    if (pmGameMode === 'party' || pmGameMode === 'global') {
+      PeerMesh.sendPlayerState({
+        peerId: PeerMesh.getOwnPeerId(),
+        posX: PlayerPositionRef.x,
+        posY: PlayerPositionRef.y,
+        posZ: PlayerPositionRef.z,
+        rotY: PlayerPositionRef.rotY,
+        health: useAppStore.getState().health,
+        maxHealth: useAppStore.getState().maxHealth,
+        isDead: PlayerPositionRef.isDead,
+        animationIntent: PlayerPositionRef.animationIntent,
+        level: PlayerPositionRef.level,
+        scale: PlayerPositionRef.scale,
+      });
+    }
   });
 
   // Geometrias de debug compartilhadas (Unidade 1x1x1 para escala fácil)

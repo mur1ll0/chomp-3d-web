@@ -5,6 +5,7 @@ import { useAppStore } from '../../store/useAppStore';
 import { ArrowLeft, Settings } from 'lucide-react';
 import { MapGenerator } from '../../infrastructure/generation/MapGenerator';
 import { peerSession } from '../../infrastructure/network/PeerSession';
+import { PeerMesh } from '../../infrastructure/network/PeerMesh';
 import { ProceduralMap } from '../canvas/ProceduralMap';
 import { PlayerDinosaur } from '../canvas/PlayerDinosaur';
 import { EdiblesManager } from '../canvas/EdiblesManager';
@@ -23,7 +24,7 @@ const DeathScreen: React.FC<{ onLeave: () => Promise<void> | void }> = ({ onLeav
   const resetGameStats = useAppStore(s => s.resetGameStats);
   const setScreen = useAppStore(s => s.setScreen);
   const gameMode = useAppStore(s => s.gameMode);
-  const isOnline = gameMode === 'online';
+  const isOnline = gameMode === 'party' || gameMode === 'global';
 
   return (
     <div 
@@ -130,13 +131,15 @@ export const GameScreen: React.FC = () => {
   const sessionCode = useAppStore(s => s.sessionCode);
   
   const onlineRole = useAppStore(s => s.onlineRole);
-  const isOnline = gameMode === 'online';
+  const isOnline = gameMode === 'party' || gameMode === 'global';
 
   const handleLeaveGame = async () => {
-    if (onlineRole === 'host' && peerSession.getHostClients().length > 0) {
-      await peerSession.transferHostToNextInLine();
+    if (gameMode === 'party' || gameMode === 'global') {
+      await PeerMesh.destroy();
     }
-    peerSession.destroy();
+    if (onlineRole === 'host' || gameMode === 'online') {
+      peerSession.destroy();
+    }
     setScreen('menu');
   };
 

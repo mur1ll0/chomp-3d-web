@@ -17,10 +17,7 @@ export const MainMenu: React.FC = () => {
 
         <div className="space-y-4">
           <button
-            onClick={() => {
-              setGameMode('online');
-              setScreen('session-select');
-            }}
+            onClick={() => setScreen('session-select')}
             className="group relative w-full flex items-center justify-center gap-3 bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-400 hover:to-red-500 text-white font-bold py-4 px-6 rounded-xl shadow-lg hover:shadow-orange-500/25 transition-all active:scale-95 overflow-hidden"
           >
             <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-out" />
@@ -30,7 +27,7 @@ export const MainMenu: React.FC = () => {
 
           <button
             onClick={() => {
-              setGameMode('offline');
+              setGameMode('single');
               setScreen('character-select');
             }}
             className="w-full flex items-center justify-center gap-3 bg-slate-700 hover:bg-slate-600 text-white font-bold py-4 px-6 rounded-xl shadow-lg transition-all active:scale-95 border border-slate-600 hover:border-slate-500"
