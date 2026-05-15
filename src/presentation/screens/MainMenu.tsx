@@ -1,9 +1,9 @@
 import React from 'react';
 import { useAppStore } from '../../store/useAppStore';
-import { Play, Wifi, Settings } from 'lucide-react';
+import { Play, Settings } from 'lucide-react';
 
 export const MainMenu: React.FC = () => {
-  const { setScreen, setGameMode } = useAppStore();
+  const { setScreen } = useAppStore();
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-slate-900 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-800 to-slate-950">
@@ -21,19 +21,8 @@ export const MainMenu: React.FC = () => {
             className="group relative w-full flex items-center justify-center gap-3 bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-400 hover:to-red-500 text-white font-bold py-4 px-6 rounded-xl shadow-lg hover:shadow-orange-500/25 transition-all active:scale-95 overflow-hidden"
           >
             <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-out" />
-            <Wifi className="w-5 h-5 relative z-10" />
-            <span className="relative z-10">Jogar Online</span>
-          </button>
-
-          <button
-            onClick={() => {
-              setGameMode('single');
-              setScreen('character-select');
-            }}
-            className="w-full flex items-center justify-center gap-3 bg-slate-700 hover:bg-slate-600 text-white font-bold py-4 px-6 rounded-xl shadow-lg transition-all active:scale-95 border border-slate-600 hover:border-slate-500"
-          >
-            <Play className="w-5 h-5 text-green-400" />
-            <span>Jogar Offline</span>
+            <Play className="w-5 h-5 fill-current relative z-10" />
+            <span className="relative z-10">Jogar</span>
           </button>
 
           <button

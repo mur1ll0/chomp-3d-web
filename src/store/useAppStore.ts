@@ -1,10 +1,10 @@
 import { create } from 'zustand';
+import type { PackMemberEntry } from '../infrastructure/network/messages';
 
 export type Screen = 'menu' | 'character-select' | 'settings' | 'game' | 'session-select';
 export type GameMode = 'single' | 'party' | 'global' | 'online' | 'offline' | null;
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
 export type OnlineRole = 'host' | 'client' | null;
-export type SignalingStatus = 'online' | 'offline' | 'checking';
 
 export type ControlAction =
   | 'moveForward'
@@ -103,6 +103,11 @@ interface AppState {
   foodEaten: number; // total units of food eaten
   debugZoomUnlocked: boolean;
 
+  // Pack State
+  packRole: 'solo' | 'leading' | 'member';
+  packMembers: PackMemberEntry[];
+  packLeaderPeerId: string | null;
+
   // Multiplayer State
   sessionCode: string;
   packCode: string;
@@ -112,10 +117,6 @@ interface AppState {
   networkNPCs: unknown[];
   networkPlayers: unknown[];
   networkTick: number;
-
-  // Phase 6 — New Network State
-  signalingStatus: SignalingStatus;
-  globalPlayerCount: number;
 
   // Actions
   setScreen: (screen: Screen) => void;
@@ -153,10 +154,10 @@ interface AppState {
   setConnectedPlayers: (players: string[]) => void;
   setNetworkData: (npcs: unknown[], players: unknown[], tick: number, edibleStates?: Record<string, number>) => void;
 
-  // Phase 6 Actions
   setPackCode: (code: string) => void;
-  setSignalingStatus: (status: SignalingStatus) => void;
-  setGlobalPlayerCount: (count: number) => void;
+  setPackRole: (role: 'solo' | 'leading' | 'member') => void;
+  setPackMembers: (members: PackMemberEntry[]) => void;
+  setPackLeaderPeerId: (peerId: string | null) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -194,6 +195,11 @@ export const useAppStore = create<AppState>((set) => ({
   foodEaten: 0,
   debugZoomUnlocked: false,
 
+  // Pack
+  packRole: 'solo',
+  packMembers: [],
+  packLeaderPeerId: null,
+
   // Multiplayer
   sessionCode: '',
   packCode: '',
@@ -203,10 +209,6 @@ export const useAppStore = create<AppState>((set) => ({
   networkNPCs: [],
   networkPlayers: [],
   networkTick: 0,
-
-  // Phase 6
-  signalingStatus: 'checking',
-  globalPlayerCount: 0,
 
   setScreen: (screen) => set({ currentScreen: screen }),
   setGameMode: (mode) => set({ gameMode: mode }),
@@ -435,8 +437,9 @@ export const useAppStore = create<AppState>((set) => ({
   setConnectionStatus: (status) => set({ connectionStatus: status }),
   setOnlineRole: (role) => set({ onlineRole: role }),
   setConnectedPlayers: (players) => set({ connectedPlayers: players }),
-  setSignalingStatus: (status) => set({ signalingStatus: status }),
-  setGlobalPlayerCount: (count) => set({ globalPlayerCount: count }),
+  setPackRole: (role) => set({ packRole: role }),
+  setPackMembers: (members) => set({ packMembers: members }),
+  setPackLeaderPeerId: (peerId) => set({ packLeaderPeerId: peerId }),
   setNetworkData: (npcs, players, tick, edibleStates) => set((state) => {
     const update: Partial<AppState> = { networkNPCs: npcs, networkPlayers: players, networkTick: tick };
     if (edibleStates) {

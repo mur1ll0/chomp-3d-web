@@ -14,7 +14,9 @@ import { DynamicEnvironment } from '../canvas/DynamicEnvironment';
 import { DebugPanel } from './DebugPanel';
 import { NPCDinosaurs } from '../canvas/NPCDinosaurs';
 import { RemotePlayers } from '../canvas/RemotePlayers';
-import { BandPanel } from './BandPanel';
+import { NetworkPanel } from './NetworkPanel';
+import { PackInviteToast } from './PackInviteToast';
+import { showPackInvite, showPackJoinRequest, showPackKicked, showPackInfo } from './packToast';
 
 // Sub-componente para Tela de Morte
 const DeathScreen: React.FC<{ onLeave: () => Promise<void> | void }> = ({ onLeave }) => {
@@ -133,6 +135,29 @@ export const GameScreen: React.FC = () => {
   const onlineRole = useAppStore(s => s.onlineRole);
   const isOnline = gameMode === 'party' || gameMode === 'global';
 
+  // Wire up pack callbacks
+  React.useEffect(() => {
+    PeerMesh.onPackInvite = (fromPeerId, fromPlayerName) => {
+      showPackInvite(fromPeerId, fromPlayerName);
+    };
+    PeerMesh.onPackJoinRequest = (fromPeerId, fromPlayerName) => {
+      showPackJoinRequest(fromPeerId, fromPlayerName);
+    };
+    PeerMesh.onPackKicked = () => {
+      showPackKicked();
+    };
+    PeerMesh.onPackMemberUpdate = (members) => {
+      showPackInfo(`Bando: ${members.length} membro(s)`);
+    };
+
+    return () => {
+      PeerMesh.onPackInvite = null;
+      PeerMesh.onPackJoinRequest = null;
+      PeerMesh.onPackKicked = null;
+      PeerMesh.onPackMemberUpdate = null;
+    };
+  }, []);
+
   const handleLeaveGame = async () => {
     if (gameMode === 'party' || gameMode === 'global') {
       await PeerMesh.destroy();
@@ -203,7 +228,8 @@ export const GameScreen: React.FC = () => {
       {isDead && <DeathScreen onLeave={handleLeaveGame} />}
 
       {!isDead && <PlayerHUD />}
-      {isOnline && <BandPanel />}
+      <NetworkPanel />
+      <PackInviteToast />
       {!isDead && <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-1.5 h-1.5 bg-white/50 rounded-full z-10 pointer-events-none" />}
 
       <Canvas shadows={{ type: THREE.PCFShadowMap }}>

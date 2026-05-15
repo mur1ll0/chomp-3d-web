@@ -175,6 +175,55 @@ export interface EventHistoryResponseMessage {
   targetPeerId: string;
 }
 
+// ── Pack/Bando Messages ──
+
+export interface PackMemberEntry {
+  peerId: string;
+  playerName: string;
+  dinoId: string;
+}
+
+export interface PackInviteMessage {
+  type: 'pack_invite';
+  fromPeerId: string;
+  fromPlayerName: string;
+  packLeader: string;
+}
+
+export interface PackInviteResponseMessage {
+  type: 'pack_invite_response';
+  fromPeerId: string;
+  accept: boolean;
+}
+
+export interface PackJoinRequestMessage {
+  type: 'pack_join_request';
+  fromPeerId: string;
+  fromPlayerName: string;
+  fromDinoId: string;
+}
+
+export interface PackJoinResponseMessage {
+  type: 'pack_join_response';
+  fromPeerId: string;
+  accept: boolean;
+}
+
+export interface PackKickMessage {
+  type: 'pack_kick';
+  targetPeerId: string;
+}
+
+export interface PackMemberUpdateMessage {
+  type: 'pack_member_update';
+  members: PackMemberEntry[];
+}
+
+export interface PackLeaveMessage {
+  type: 'pack_leave';
+  peerId: string;
+}
+
 export type PeerMeshMessage =
   | PeerHandshakeMessage
   | PeerHandshakeAckMessage
@@ -183,4 +232,11 @@ export type PeerMeshMessage =
   | HeartbeatMessage
   | PeerListMessage
   | EventHistoryRequestMessage
-  | EventHistoryResponseMessage;
+  | EventHistoryResponseMessage
+  | PackInviteMessage
+  | PackInviteResponseMessage
+  | PackJoinRequestMessage
+  | PackJoinResponseMessage
+  | PackKickMessage
+  | PackMemberUpdateMessage
+  | PackLeaveMessage;

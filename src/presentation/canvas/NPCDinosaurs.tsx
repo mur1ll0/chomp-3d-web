@@ -77,8 +77,14 @@ const NPCInstance: React.FC<{
     return { clonedScene: clone, cachedMaterials: mats };
   }, [gltf.scene]);
 
-  const { playAnimation } = useDinosaurAnimations(gltf, clonedScene);
+  const { names, playAnimation } = useDinosaurAnimations(gltf, clonedScene);
   const lastColorState = useRef<'normal' | 'hit' | 'dead'>('normal');
+
+  useEffect(() => {
+    if (names && names.length > 0) {
+      playAnimation('Idle');
+    }
+  }, [names, playAnimation]);
 
   useFrame((_, delta) => {
     if (!groupRef.current) return;

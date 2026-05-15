@@ -2,7 +2,6 @@ import Peer from 'peerjs';
 import type { DataConnection } from 'peerjs';
 import { EventBus, type GameEvent } from './EventBus';
 import { ChunkInterestManager, worldToChunk } from './ChunkInterestManager';
-import { SignalingClient, type PeerListEntry } from './SignalingClient';
 import type {
   PeerHandshakeMessage,
   PeerHandshakeAckMessage,
@@ -12,6 +11,14 @@ import type {
   PeerListMessage,
   EventHistoryRequestMessage,
   EventHistoryResponseMessage,
+  PackMemberEntry,
+  PackInviteMessage,
+  PackInviteResponseMessage,
+  PackJoinRequestMessage,
+  PackJoinResponseMessage,
+  PackKickMessage,
+  PackMemberUpdateMessage,
+  PackLeaveMessage,
   PeerMeshMessage,
 } from './messages';
 import { useAppStore } from '../../store/useAppStore';
@@ -32,6 +39,7 @@ export interface PeerInfo {
 const HEARTBEAT_INTERVAL_MS = 5000;
 const PEER_TIMEOUT_MS = 15000;
 const PLAYER_STATE_THROTTLE_MS = 100;
+const GLOBAL_ROOM_CODE = 'chomp3d-global-v1';
 
 function generateSessionCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -64,7 +72,16 @@ class PeerMeshClass {
   private _onPeerListChanged: ((peers: PeerInfo[]) => void) | null = null;
   private _isFirstPeer = false;
   private _remotePlayerStates = new Map<string, PlayerStateMessage>();
-  private _signalingClient: SignalingClient | null = null;
+
+  // Pack state
+  private _packMembers: PackMemberEntry[] = [];
+  private _isPackLeader = false;
+  onPackInvite: ((fromPeerId: string, fromPlayerName: string) => void) | null = null;
+  onPackInviteAccepted: ((peerId: string, playerName: string) => void) | null = null;
+  onPackJoinRequest: ((fromPeerId: string, fromPlayerName: string, fromDinoId: string) => void) | null = null;
+  onPackKicked: (() => void) | null = null;
+  onPackMemberUpdate: ((members: PackMemberEntry[]) => void) | null = null;
+  onPackDisbanded: (() => void) | null = null;
 
   // ── Lifecycle ──
 
@@ -90,63 +107,31 @@ class PeerMeshClass {
     this._startHeartbeat();
   }
 
-  async startGlobal(signalingUrl: string): Promise<void> {
+  async startGlobal(): Promise<void> {
     this._mode = 'global';
-    this._sessionCode = '';
+    this._sessionCode = GLOBAL_ROOM_CODE;
 
-    await this._createPeer(generatePeerId());
+    // Tenta ser o host (primeiro peer a entrar no mundo)
+    try {
+      await this._createPeer(this._sessionCode);
+      this._isFirstPeer = true;
+    } catch {
+      // ID já em uso — entra como cliente
+      if (this._ownPeer) {
+        this._ownPeer.destroy();
+        this._ownPeer = null;
+      }
+      await this._createPeer(generatePeerId());
+      this._isFirstPeer = false;
+    }
+
     EventBus.setOwnPeerId(this._ownPeerId);
 
-    this._signalingClient = new SignalingClient(signalingUrl);
+    if (!this._isFirstPeer) {
+      await this._connectToHostPeer(this._sessionCode);
+    }
 
-    this._signalingClient.onWelcome = (_peerId, count) => {
-      useAppStore.getState().setConnectionStatus('connected');
-      useAppStore.getState().setGlobalPlayerCount(count);
-    };
-
-    this._signalingClient.onPeerList = (peers) => {
-      this._connectToInterestPeers(peers);
-    };
-
-    this._signalingClient.onPeerJoined = (peer) => {
-      if (this._isInInterestZone(peer)) {
-        this._connectToRemotePeer(peer.peerId, peer);
-      }
-    };
-
-    this._signalingClient.onPeerLeft = (peerId) => {
-      this._onPeerDisconnected(peerId);
-    };
-
-    this._signalingClient.onPeerChunkUpdate = (peerId, cx, cz) => {
-      const info = this._peerInfo.get(peerId);
-      if (info) {
-        info.chunkX = cx;
-        info.chunkZ = cz;
-      }
-      if (this._chunkInterest) {
-        this._chunkInterest.updatePeerChunk(peerId, cx, cz);
-      }
-    };
-
-    this._signalingClient.onDisconnected = () => {
-      useAppStore.getState().setConnectionStatus('disconnected');
-    };
-
-    await this._signalingClient.connect();
-
-    this._signalingClient.sendJoin(
-      this._ownPeerId,
-      this._playerName,
-      this._dinoId,
-      this._colors,
-      useAppStore.getState().renderDistance
-    );
-
-    // Registra chunk do jogador no signaling
-    const chunk = worldToChunk(0, 0);
-    this._signalingClient.sendChunkUpdate(chunk.x, chunk.z);
-
+    useAppStore.getState().setConnectionStatus('connected');
     this._startHeartbeat();
   }
 
@@ -166,16 +151,12 @@ class PeerMeshClass {
       this._ownPeer = null;
     }
 
-    if (this._signalingClient) {
-      this._signalingClient.disconnect();
-      this._signalingClient = null;
-    }
-
     this._ownPeerId = 'local';
     EventBus.setOwnPeerId('local');
     this._onPeerListChanged = null;
     this._isFirstPeer = false;
     this._remotePlayerStates.clear();
+    this._clearPack();
   }
 
   // ── Configuração ──
@@ -252,6 +233,121 @@ class PeerMeshClass {
 
     const msg: PlayerStateMessage = { type: 'player_state', ...state };
     this._broadcast(msg);
+  }
+
+  // ── Pack API ──
+
+  createPack(): void {
+    this._packMembers = [{ peerId: this._ownPeerId, playerName: this._playerName, dinoId: this._dinoId }];
+    this._isPackLeader = true;
+    useAppStore.getState().setPackRole('leading');
+    useAppStore.getState().setPackMembers(this._packMembers);
+    useAppStore.getState().setPackLeaderPeerId(this._ownPeerId);
+  }
+
+  inviteToPack(peerId: string): void {
+    const msg: PackInviteMessage = {
+      type: 'pack_invite',
+      fromPeerId: this._ownPeerId,
+      fromPlayerName: this._playerName,
+      packLeader: this._ownPeerId,
+    };
+    this._sendToPeer(peerId, msg);
+  }
+
+  respondToPackInvite(targetPeerId: string, accept: boolean): void {
+    const msg: PackInviteResponseMessage = {
+      type: 'pack_invite_response',
+      fromPeerId: this._ownPeerId,
+      accept,
+    };
+    this._sendToPeer(targetPeerId, msg);
+  }
+
+  requestJoinPack(leaderPeerId: string): void {
+    const msg: PackJoinRequestMessage = {
+      type: 'pack_join_request',
+      fromPeerId: this._ownPeerId,
+      fromPlayerName: this._playerName,
+      fromDinoId: this._dinoId,
+    };
+    this._sendToPeer(leaderPeerId, msg);
+  }
+
+  respondToPackJoinRequest(targetPeerId: string, accept: boolean): void {
+    const msg: PackJoinResponseMessage = {
+      type: 'pack_join_response',
+      fromPeerId: this._ownPeerId,
+      accept,
+    };
+    this._sendToPeer(targetPeerId, msg);
+
+    if (accept) {
+      this._addPackMember(targetPeerId);
+    }
+  }
+
+  kickFromPack(memberPeerId: string): void {
+    this._removePackMember(memberPeerId);
+    const msg: PackKickMessage = {
+      type: 'pack_kick',
+      targetPeerId: memberPeerId,
+    };
+    this._broadcast(msg);
+  }
+
+  leavePack(): void {
+    const msg: PackLeaveMessage = {
+      type: 'pack_leave',
+      peerId: this._ownPeerId,
+    };
+    this._broadcast(msg);
+    this._clearPack();
+  }
+
+  getPackMembers(): PackMemberEntry[] {
+    return [...this._packMembers];
+  }
+
+  isPackLeader(): boolean {
+    return this._isPackLeader;
+  }
+
+  private _addPackMember(peerId: string): void {
+    const info = this._peerInfo.get(peerId);
+    if (!info) return;
+    if (this._packMembers.find(m => m.peerId === peerId)) return;
+
+    this._packMembers.push({
+      peerId,
+      playerName: info.playerName,
+      dinoId: info.dinoId,
+    });
+    useAppStore.getState().setPackMembers(this._packMembers);
+    this._broadcastPackUpdate();
+  }
+
+  private _removePackMember(peerId: string): void {
+    this._packMembers = this._packMembers.filter(m => m.peerId !== peerId);
+    useAppStore.getState().setPackMembers(this._packMembers);
+    this._broadcastPackUpdate();
+  }
+
+  private _broadcastPackUpdate(): void {
+    const msg: PackMemberUpdateMessage = {
+      type: 'pack_member_update',
+      members: this._packMembers,
+    };
+    this._broadcast(msg);
+    this.onPackMemberUpdate?.(this._packMembers);
+  }
+
+  private _clearPack(): void {
+    this._packMembers = [];
+    this._isPackLeader = false;
+    useAppStore.getState().setPackRole('solo');
+    useAppStore.getState().setPackMembers([]);
+    useAppStore.getState().setPackLeaderPeerId(null);
   }
 
   // ── Métodos privados ──
@@ -379,6 +475,27 @@ class PeerMeshClass {
         break;
       case 'event_history_response':
         this._handleHistoryResponse(msg);
+        break;
+      case 'pack_invite':
+        this._handlePackInvite(msg);
+        break;
+      case 'pack_invite_response':
+        this._handlePackInviteResponse(msg);
+        break;
+      case 'pack_join_request':
+        this._handlePackJoinRequest(msg);
+        break;
+      case 'pack_join_response':
+        this._handlePackJoinResponse(msg);
+        break;
+      case 'pack_kick':
+        this._handlePackKick(msg);
+        break;
+      case 'pack_member_update':
+        this._handlePackMemberUpdate(msg);
+        break;
+      case 'pack_leave':
+        this._handlePackLeave(msg);
         break;
     }
   }
@@ -528,15 +645,102 @@ class PeerMeshClass {
     }
   }
 
+  // ── Pack Message Handlers ──
+
+  private _handlePackInvite(msg: PackInviteMessage): void {
+    if (this._packMembers.length > 0) return;
+    useAppStore.getState().setPackLeaderPeerId(msg.packLeader);
+    this.onPackInvite?.(msg.fromPeerId, msg.fromPlayerName);
+  }
+
+  private _handlePackInviteResponse(msg: PackInviteResponseMessage): void {
+    if (!this._isPackLeader) return;
+
+    if (msg.accept) {
+      this._addPackMember(msg.fromPeerId);
+      this.onPackInviteAccepted?.(msg.fromPeerId, this._peerInfo.get(msg.fromPeerId)?.playerName ?? '');
+    }
+  }
+
+  private _handlePackJoinRequest(msg: PackJoinRequestMessage): void {
+    if (!this._isPackLeader) return;
+    this.onPackJoinRequest?.(msg.fromPeerId, msg.fromPlayerName, msg.fromDinoId);
+  }
+
+  private _handlePackJoinResponse(msg: PackJoinResponseMessage): void {
+    if (msg.accept) {
+      const leaderPeerId = useAppStore.getState().packLeaderPeerId;
+      if (!leaderPeerId) return;
+      this._packMembers.push({
+        peerId: this._ownPeerId,
+        playerName: this._playerName,
+        dinoId: this._dinoId,
+      });
+      useAppStore.getState().setPackRole('member');
+      useAppStore.getState().setPackMembers(this._packMembers);
+      useAppStore.getState().setPackLeaderPeerId(msg.fromPeerId);
+    } else {
+      useAppStore.getState().setPackLeaderPeerId(null);
+    }
+  }
+
+  private _handlePackKick(msg: PackKickMessage): void {
+    if (msg.targetPeerId !== this._ownPeerId) return;
+    this._clearPack();
+    this.onPackKicked?.();
+  }
+
+  private _handlePackMemberUpdate(msg: PackMemberUpdateMessage): void {
+    this._packMembers = msg.members;
+    const isMember = msg.members.some(m => m.peerId === this._ownPeerId);
+    if (!isMember) {
+      this._clearPack();
+      this.onPackDisbanded?.();
+      return;
+    }
+    useAppStore.getState().setPackMembers(msg.members);
+    useAppStore.getState().setPackRole('member');
+    const leader = msg.members.find(m => m.peerId !== this._ownPeerId);
+    if (msg.members.length <= 1) {
+      useAppStore.getState().setPackLeaderPeerId(msg.members[0]?.peerId ?? null);
+    } else if (leader) {
+      useAppStore.getState().setPackLeaderPeerId(leader.peerId);
+    }
+    this.onPackMemberUpdate?.(msg.members);
+  }
+
+  private _handlePackLeave(msg: PackLeaveMessage): void {
+    if (this._isPackLeader) {
+      this._removePackMember(msg.peerId);
+      if (this._packMembers.length <= 1) {
+        this._clearPack();
+        this.onPackDisbanded?.();
+      }
+    } else {
+      this._packMembers = this._packMembers.filter(m => m.peerId !== msg.peerId);
+      useAppStore.getState().setPackMembers(this._packMembers);
+    }
+  }
+
   private _onPeerDisconnected(peerId: string): void {
     this._connections.delete(peerId);
     this._peerInfo.delete(peerId);
     this._lastPeerHeartbeat.delete(peerId);
+
+    if (this._isPackLeader) {
+      this._removePackMember(peerId);
+      if (this._packMembers.length <= 1) {
+        this._clearPack();
+        this.onPackDisbanded?.();
+      }
+    } else if (useAppStore.getState().packLeaderPeerId === peerId) {
+      this._clearPack();
+    }
+
     this._notifyPeerListChanged();
   }
 
   private _onLocalChunkChanged(_oldPos: { x: number; z: number }, newPos: { x: number; z: number }): void {
-    // Notifica peers conectados sobre mudança de chunk
     const event: GameEvent = EventBus.push({
       type: 'player_chunk',
       tick: 0,
@@ -548,14 +752,7 @@ class PeerMeshClass {
       },
     });
     this.broadcastEvent(event);
-
-    // Em modo Global, notifica o signaling server
-    if (this._mode === 'global' && this._signalingClient) {
-      this._signalingClient.sendChunkUpdate(newPos.x, newPos.z);
-    }
   }
-
-  // ── Global Mode Helpers ──
 
   private _isInInterestZone(peer: { chunkX: number; chunkZ: number; renderDistance?: number }): boolean {
     const myChunk = this._chunkInterest?.playerChunk ?? { x: 0, z: 0 };
@@ -565,74 +762,7 @@ class PeerMeshClass {
     return dist <= myRadius || dist <= peerRadius;
   }
 
-  private _connectToInterestPeers(peers: PeerListEntry[]): void {
-    const candidates = peers.filter(p => {
-      if (p.peerId === this._ownPeerId) return false;
-      if (this._connections.has(p.peerId)) return false;
-      return this._isInInterestZone(p);
-    });
-
-    // Ordena por distância (mais próximos primeiro)
-    const myChunk = this._chunkInterest?.playerChunk ?? { x: 0, z: 0 };
-    candidates.sort((a, b) => {
-      const da = Math.abs(a.chunkX - myChunk.x) + Math.abs(a.chunkZ - myChunk.z);
-      const db = Math.abs(b.chunkX - myChunk.x) + Math.abs(b.chunkZ - myChunk.z);
-      return da - db;
-    });
-
-    // Hard cap: max 30 conexões
-    const toConnect = candidates.slice(0, 30);
-
-    for (const peer of toConnect) {
-      this._connectToRemotePeer(peer.peerId, peer);
-    }
-  }
-
-  private _connectToRemotePeer(peerId: string, info: { playerName: string; dinoId: string; chunkX: number; chunkZ: number }): void {
-    if (this._connections.has(peerId)) return;
-    if (peerId === this._ownPeerId) return;
-    if (!this._ownPeer) return;
-
-    this._peerInfo.set(peerId, {
-      id: peerId,
-      peerId,
-      playerName: info.playerName,
-      dinoId: info.dinoId,
-      colors: {},
-      chunkX: info.chunkX,
-      chunkZ: info.chunkZ,
-      connectedAt: Date.now(),
-    });
-
-    const conn = this._ownPeer.connect(peerId, { reliable: true });
-
-    conn.on('open', () => {
-      this._connections.set(peerId, conn);
-      this._lastPeerHeartbeat.set(peerId, Date.now());
-      const chunk = worldToChunk(0, 0);
-      const hs: PeerHandshakeMessage = {
-        type: 'peer_handshake',
-        peerId: this._ownPeerId,
-        playerName: this._playerName,
-        dinoId: this._dinoId,
-        colors: this._colors,
-        chunkX: chunk.x,
-        chunkZ: chunk.z,
-        tick: 0,
-      };
-      this._sendToPeer(peerId, hs);
-    });
-
-    conn.on('data', (raw) => {
-      this._handleMessage(peerId, raw as PeerMeshMessage);
-    });
-
-    conn.on('error', () => this._onPeerDisconnected(peerId));
-    conn.on('close', () => this._onPeerDisconnected(peerId));
-  }
-
   reconcileConnections(): void {
-    // Reavalia conexões após mudança de renderDistance
     if (!this._chunkInterest) return;
 
     const peerIds = Array.from(this._peerInfo.keys());
@@ -642,13 +772,6 @@ class PeerMeshClass {
       if (!this._isInInterestZone({ chunkX: info.chunkX, chunkZ: info.chunkZ })) {
         this._onPeerDisconnected(pid);
       }
-    }
-
-    // Notifica signaling sobre a mudança de renderDistance
-    if (this._signalingClient) {
-      this._signalingClient.sendRenderDistanceUpdate(
-        useAppStore.getState().renderDistance
-      );
     }
   }
 

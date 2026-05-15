@@ -1,7 +1,7 @@
-import React, { useState, Suspense, startTransition, useCallback } from 'react';
+import React, { useState, Suspense, startTransition } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { DINOSAUR_ROSTER, type Diet } from '../../domain/models/DinosaurStats';
-import { ArrowLeft, Play, Loader2, Copy, Check } from 'lucide-react';
+import { ArrowLeft, Play, Loader2 } from 'lucide-react';
 import { PeerMesh } from '../../infrastructure/network/PeerMesh';
 import { SpawnResolver } from '../../useCases/game/SpawnResolver';
 import { PackCodec } from '../../useCases/game/PackCodec';
@@ -167,15 +167,11 @@ export const CharacterSelectionMenu: React.FC = () => {
     playerName, setPlayerName, 
     selectedDinoId, setSelectedDinoId,
     sessionCode, setSessionCode,
-    packCode, setPackCode,
-    signalingStatus,
+    setPackCode,
   } = useAppStore();
 
+  const [packCodeInput, setPackCodeInput] = useState('');
   const [dietFilter, setDietFilter] = useState<Diet>('Carnivore');
-  const [packCodeInput, setPackCodeInput] = useState(packCode || '');
-  const [packCodeError, setPackCodeError] = useState('');
-  const [copied, setCopied] = useState(false);
-  const [generatedPackCode, setGeneratedPackCode] = useState('');
 
   const filteredDinos = DINOSAUR_ROSTER.filter(d => d.diet === dietFilter);
   const selectedDino = DINOSAUR_ROSTER.find(d => d.id === selectedDinoId) || filteredDinos[0];
@@ -186,35 +182,7 @@ export const CharacterSelectionMenu: React.FC = () => {
     });
   };
 
-  const handleGeneratePackCode = () => {
-    const herbivoreRoster = DINOSAUR_ROSTER.filter(d => d.diet === 'Herbivore').map(d => d.id);
-    const resolver = new SpawnResolver(WORLD_SEED);
-    const pos = resolver.resolve(selectedDinoId, herbivoreRoster, selectedDino.diet);
-    const code = PackCodec.fromSpawnPosition(selectedDinoId, pos.chunkX, pos.chunkZ);
-    setGeneratedPackCode(code);
-    setPackCodeInput(code);
-    setPackCode(code);
-    setPackCodeError('');
-  };
-
-  const handlePackCodeChange = (value: string) => {
-    setPackCodeInput(value);
-    setPackCodeError('');
-    if (value.trim()) {
-      const decoded = PackCodec.decode(value.trim());
-      if (!decoded) {
-        setPackCodeError('Código inválido. Use o formato: ESPÉCIE-CxZ (ex: TRIC-3x5)');
-      } else if (decoded.speciesId !== selectedDinoId) {
-        setPackCodeError(`Este código é para ${decoded.speciesId}, não para ${selectedDinoId}`);
-      } else {
-        setPackCode(value.trim());
-      }
-    } else {
-      setPackCode('');
-    }
-  };
-
-  const handleStartGame = useCallback(async () => {
+  const handleStartGame = async () => {
     if ((gameMode === 'global' || gameMode === 'party') && !playerName.trim()) {
       alert("Por favor, insira um nome para o modo online.");
       return;
@@ -237,27 +205,33 @@ export const CharacterSelectionMenu: React.FC = () => {
 
     if (gameMode === 'global') {
       try {
-        const signalingUrl = import.meta.env.VITE_SIGNALING_URL || 'ws://localhost:3001';
         PeerMesh.setPlayerInfo(playerName, selectedDinoId, useAppStore.getState().dinoColors);
-        await PeerMesh.startGlobal(signalingUrl);
+        await PeerMesh.startGlobal();
       } catch {
-        alert('Erro ao conectar no servidor global. Tente novamente.');
+        alert('Erro ao conectar no mundo global. Tente novamente.');
         return;
       }
     }
 
+    // Auto-gera código do pack se não entrou em um existente
+    if (gameMode === 'global' || gameMode === 'party') {
+      if (!useAppStore.getState().packCode) {
+        const herbivoreRoster = DINOSAUR_ROSTER.filter(d => d.diet === 'Herbivore').map(d => d.id);
+        const resolver = new SpawnResolver(WORLD_SEED);
+        const pos = resolver.resolve(selectedDinoId, herbivoreRoster, selectedDino.diet);
+        setPackCode(PackCodec.fromSpawnPosition(selectedDinoId, pos.chunkX, pos.chunkZ));
+      }
+      PeerMesh.createPack();
+    }
+
     setScreen('game');
-  }, [gameMode, playerName, selectedDinoId, sessionCode, setSessionCode, setScreen]);
+  };
 
   const handleBack = () => {
-    if (gameMode === 'party' || gameMode === 'global') {
-      setSessionCode('');
-      setPackCode('');
-      setGameMode(null);
-      setScreen('session-select');
-    } else {
-      setScreen('menu');
-    }
+    setSessionCode('');
+    setPackCode('');
+    setGameMode(null);
+    setScreen('session-select');
   };
 
   return (
@@ -290,69 +264,36 @@ export const CharacterSelectionMenu: React.FC = () => {
             </div>
           )}
 
-          {/* Mode indicator */}
           {gameMode === 'global' && (
             <div className="bg-blue-900/30 border border-blue-500/30 rounded-xl p-3 text-center">
               <div className="text-xs text-blue-400 uppercase tracking-wider">🌍 Modo Global</div>
-              <div className={`text-xs mt-1 ${signalingStatus === 'online' ? 'text-green-400' : 'text-yellow-400'}`}>
-                {signalingStatus === 'online' ? 'Servidor Online' : 'Verificando...'}
-              </div>
+              <div className="text-xs text-green-400 mt-1">Peer-to-Peer</div>
             </div>
           )}
 
-          {gameMode === 'party' && (
-            <div className="bg-slate-900/80 border border-orange-500/40 rounded-xl p-4 text-center">
-              <div className="text-xs text-slate-400 uppercase tracking-wider mb-1">🦕 Party Local</div>
-              <div className="text-3xl font-black text-orange-400 tracking-[0.3em]">{sessionCode || '---'}</div>
-              <div className="text-[10px] text-slate-500 mt-1">
-                {sessionCode ? 'Compartilhe este código com amigos' : 'Um código será gerado ao iniciar'}
-              </div>
-            </div>
-          )}
-
-          {/* Pack Code Input */}
           {(gameMode === 'party' || gameMode === 'global') && (
             <div className="space-y-2">
               <label className="block text-sm font-medium text-slate-400">Código do Pack (opcional)</label>
               <input
                 type="text"
                 value={packCodeInput}
-                onChange={(e) => handlePackCodeChange(e.target.value.toUpperCase())}
+                onChange={(e) => {
+                  setPackCodeInput(e.target.value.toUpperCase());
+                  if (e.target.value.trim()) {
+                    const decoded = PackCodec.decode(e.target.value.trim().toUpperCase());
+                    if (decoded && decoded.speciesId === selectedDinoId) {
+                      setPackCode(e.target.value.trim().toUpperCase());
+                    }
+                  } else {
+                    setPackCode('');
+                  }
+                }}
                 placeholder="Ex: TRIC-3x5"
                 className="w-full bg-slate-700/50 border border-slate-600 rounded-lg p-3 text-white focus:outline-none focus:border-orange-500 transition-colors font-mono tracking-wider uppercase"
               />
-              {packCodeError && (
-                <p className="text-xs text-red-400">{packCodeError}</p>
-              )}
               <p className="text-xs text-slate-500">
-                Compartilhe este código com amigos para cair junto no mesmo pack!
+                Insira um código para entrar no pack de outro jogador, ou deixe vazio para criar o seu próprio.
               </p>
-              <button
-                onClick={handleGeneratePackCode}
-                className="text-xs text-orange-400 hover:text-orange-300 underline underline-offset-2"
-              >
-                Gerar código do meu pack
-              </button>
-
-              {/* Pack Code Generated */}
-              {generatedPackCode && (
-                <div className="bg-slate-800/80 border border-orange-500/30 rounded-lg p-3 text-center mt-2">
-                  <div className="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Seu código de pack</div>
-                  <div className="text-xl font-black text-orange-400 tracking-[0.2em]">{generatedPackCode}</div>
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(generatedPackCode).then(() => {
-                        setCopied(true);
-                        setTimeout(() => setCopied(false), 2000);
-                      }).catch(() => {});
-                    }}
-                    className="mt-2 flex items-center justify-center gap-1 w-full bg-slate-700 hover:bg-slate-600 rounded-md py-1.5 text-xs text-white transition-all"
-                  >
-                    {copied ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
-                    {copied ? 'Copiado!' : 'Copiar Código do Pack'}
-                  </button>
-                </div>
-              )}
             </div>
           )}
 

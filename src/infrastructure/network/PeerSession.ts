@@ -233,6 +233,7 @@ export class PeerSession {
    * Se este cliente for o eleito, torna-se host. Caso contrário, reconecta.
    */
   private async handleHostTransferMessage(newHostClientId: string, _newHostPeerId: string): Promise<void> {
+    void _newHostPeerId;
     this._hostTransferInProgress = true;
 
     const amINewHost = this._myClientId === newHostClientId;
