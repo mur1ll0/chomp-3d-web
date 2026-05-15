@@ -1,3 +1,5 @@
+import { tStandalone } from '../../i18n/useT';
+
 export interface Toast {
   id: number;
   type: 'invite' | 'join_request' | 'kicked' | 'info';
@@ -13,15 +15,15 @@ export function emitToast(toast: Toast): void {
 }
 
 export function showPackInvite(fromPeerId: string, fromPlayerName: string): void {
-  emitToast({ id: ++toastId, type: 'invite', message: `${fromPlayerName} convidou você para o bando!`, fromPeerId });
+  emitToast({ id: ++toastId, type: 'invite', message: tStandalone('pack.invite', { name: fromPlayerName }), fromPeerId });
 }
 
 export function showPackJoinRequest(fromPeerId: string, fromPlayerName: string): void {
-  emitToast({ id: ++toastId, type: 'join_request', message: `${fromPlayerName} quer entrar no seu bando!`, fromPeerId });
+  emitToast({ id: ++toastId, type: 'join_request', message: tStandalone('pack.joinRequest', { name: fromPlayerName }), fromPeerId });
 }
 
 export function showPackKicked(): void {
-  emitToast({ id: ++toastId, type: 'kicked', message: 'Você foi removido do bando!' });
+  emitToast({ id: ++toastId, type: 'kicked', message: tStandalone('pack.kicked') });
 }
 
 export function showPackInfo(message: string): void {

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAppStore } from '../../store/useAppStore';
+import { useT } from '../../i18n/useT';
 import { ArrowLeft, Monitor, Keyboard, X } from 'lucide-react';
 
 export const SettingsMenu: React.FC<{ inGame?: boolean }> = ({ inGame }) => {
@@ -11,14 +12,15 @@ export const SettingsMenu: React.FC<{ inGame?: boolean }> = ({ inGame }) => {
     controlBindings,
     setControlBinding,
   } = useAppStore();
+  const t = useT();
   const [activeTab, setActiveTab] = useState<'controls' | 'graphics'>('controls');
   const [rebindingAction, setRebindingAction] = useState<null | keyof typeof controlBindings>(null);
   const panelRef = React.useRef<HTMLDivElement>(null);
 
   const formatKeyLabel = (keyCode: string): string => {
-    if (keyCode === 'MouseLeft') return 'Botão Esquerdo Mouse';
-    if (keyCode === 'MouseRight') return 'Botão Direito Mouse';
-    if (keyCode === 'MouseMiddle') return 'Botão do Meio Mouse';
+    if (keyCode === 'MouseLeft') return t('key.mouseLeft');
+    if (keyCode === 'MouseRight') return t('key.mouseRight');
+    if (keyCode === 'MouseMiddle') return t('key.mouseMiddle');
     if (keyCode.startsWith('Shift')) return 'Shift';
     if (keyCode.startsWith('Control')) return 'Ctrl';
     if (keyCode.startsWith('Key')) return keyCode.replace('Key', '').toUpperCase();
@@ -26,14 +28,14 @@ export const SettingsMenu: React.FC<{ inGame?: boolean }> = ({ inGame }) => {
   };
 
   const controlsList: Array<{ action: keyof typeof controlBindings; label: string }> = [
-    { action: 'moveForward', label: 'Mover para Frente' },
-    { action: 'moveBackward', label: 'Mover para Trás' },
-    { action: 'moveLeft', label: 'Virar à Esquerda' },
-    { action: 'moveRight', label: 'Virar à Direita' },
-    { action: 'attack', label: 'Atacar / Morder' },
-    { action: 'eat', label: 'Comer' },
-    { action: 'sprint', label: 'Correr (Sprint)' },
-    { action: 'jump', label: 'Pular' },
+    { action: 'moveForward', label: t('settings.controls.moveForward') },
+    { action: 'moveBackward', label: t('settings.controls.moveBackward') },
+    { action: 'moveLeft', label: t('settings.controls.moveLeft') },
+    { action: 'moveRight', label: t('settings.controls.moveRight') },
+    { action: 'attack', label: t('settings.controls.attack') },
+    { action: 'eat', label: t('settings.controls.eat') },
+    { action: 'sprint', label: t('settings.controls.sprint') },
+    { action: 'jump', label: t('settings.controls.jump') },
   ];
 
   React.useEffect(() => {
@@ -90,7 +92,7 @@ export const SettingsMenu: React.FC<{ inGame?: boolean }> = ({ inGame }) => {
                 <ArrowLeft className="w-6 h-6 text-slate-300" />
               </button>
             )}
-            <h2 className="text-3xl font-bold text-white">Configurações</h2>
+            <h2 className="text-3xl font-bold text-white">{t('settings.title')}</h2>
           </div>
           
           {inGame && (
@@ -110,7 +112,7 @@ export const SettingsMenu: React.FC<{ inGame?: boolean }> = ({ inGame }) => {
             }`}
           >
             <Keyboard className="w-4 h-4" />
-            Controles
+            {t('settings.tab.controls')}
           </button>
           <button
             onClick={() => setActiveTab('graphics')}
@@ -121,7 +123,7 @@ export const SettingsMenu: React.FC<{ inGame?: boolean }> = ({ inGame }) => {
             }`}
           >
             <Monitor className="w-4 h-4" />
-            Gráficos
+            {t('settings.tab.graphics')}
           </button>
         </div>
 
@@ -155,8 +157,8 @@ export const SettingsMenu: React.FC<{ inGame?: boolean }> = ({ inGame }) => {
                   <kbd className="px-3 py-1.5 bg-slate-800 border border-slate-600 rounded-md shadow-sm text-sm font-mono text-orange-400">
                     {rebindingAction === item.action
                       ? item.action === 'attack'
-                        ? 'Pressione tecla/clique mouse (ESC cancela)'
-                        : 'Pressione uma tecla (ESC cancela)'
+                        ? t('settings.controls.keyMouse')
+                        : t('settings.controls.keyOnly')
                       : formatKeyLabel(controlBindings[item.action])}
                   </kbd>
                 </button>
@@ -167,16 +169,16 @@ export const SettingsMenu: React.FC<{ inGame?: boolean }> = ({ inGame }) => {
           {activeTab === 'graphics' && (
             <div className="space-y-6">
               <div className="space-y-2">
-                <label className="block text-sm font-medium text-slate-400">Qualidade Geral</label>
+                <label className="block text-sm font-medium text-slate-400">{t('settings.graphics.quality')}</label>
                 <select className="w-full bg-slate-700/50 border border-slate-600 rounded-lg p-3 text-white focus:outline-none focus:border-orange-500 transition-colors">
-                  <option>Baixa</option>
-                  <option>Média</option>
-                  <option>Alta</option>
-                  <option>Ultra</option>
+                  <option>{t('quality.low')}</option>
+                  <option>{t('quality.medium')}</option>
+                  <option>{t('quality.high')}</option>
+                  <option>{t('quality.ultra')}</option>
                 </select>
               </div>
               <div className="space-y-2">
-                <label className="block text-sm font-medium text-slate-400">Distância de Renderização (Chunks: {renderDistance})</label>
+                <label className="block text-sm font-medium text-slate-400">{t('settings.graphics.renderDistance', { n: renderDistance })}</label>
                 <input 
                   type="range" min="1" max="6" 
                   value={renderDistance} 
@@ -184,12 +186,12 @@ export const SettingsMenu: React.FC<{ inGame?: boolean }> = ({ inGame }) => {
                   className="w-full accent-orange-500" 
                 />
                 <div className="flex justify-between text-xs text-slate-500">
-                  <span>Perto (Mais FPS)</span>
-                  <span>Longe</span>
+                  <span>{t('settings.graphics.near')}</span>
+                  <span>{t('settings.graphics.far')}</span>
                 </div>
               </div>
               <div className="flex items-center justify-between p-4 bg-slate-700/30 rounded-xl border border-slate-700/50">
-                <span>Sombras Dinâmicas</span>
+                <span>{t('settings.graphics.dynamicShadows')}</span>
                 <input type="checkbox" className="w-5 h-5 accent-orange-500 rounded bg-slate-800 border-slate-600" defaultChecked />
               </div>
 

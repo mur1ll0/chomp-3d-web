@@ -1,6 +1,7 @@
 import React, { useMemo, useRef, useEffect, useCallback, useState } from 'react';
 import * as THREE from 'three';
 import { useAppStore } from '../../store/useAppStore';
+import { useT } from '../../i18n/useT';
 import { Html } from '@react-three/drei';
 import { NPCManager } from '../../useCases/game/NPCManager';
 import { NPCState } from '../../domain/models/NPCState';
@@ -23,6 +24,7 @@ const _upAxis = new THREE.Vector3(0, 1, 0);
 const _zeroMatrix = new THREE.Matrix4().set(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0);
 
 export const EdiblesManager: React.FC<EdiblesManagerProps> = ({ chunks }) => {
+  const t = useT();
   // Subscriptions leves do Zustand (selectors específicos)
   const interactableEdibleId = useAppStore(s => s.interactableEdibleId);
   // edibleStates NÃO é inscrito via React para evitar re-renders desnecessários.
@@ -225,7 +227,7 @@ export const EdiblesManager: React.FC<EdiblesManagerProps> = ({ chunks }) => {
           
           <Html position={[0, Math.max(0.6, interactableData.scale * 1.2), 0]} center zIndexRange={[100, 0]}>
             <div className="bg-slate-900/90 text-white px-2 py-0.5 rounded-lg font-bold text-xs pointer-events-none animate-bounce border border-orange-500 shadow-xl shadow-orange-500/20 whitespace-nowrap">
-              Comer [E]
+              {t('edible.eat')}
             </div>
           </Html>
         </group>

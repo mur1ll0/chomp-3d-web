@@ -1,7 +1,8 @@
 import React, { useState, Suspense, startTransition } from 'react';
 import { useAppStore } from '../../store/useAppStore';
+import { useT } from '../../i18n/useT';
 import { DINOSAUR_ROSTER, type Diet } from '../../domain/models/DinosaurStats';
-import { ArrowLeft, Play, Loader2 } from 'lucide-react';
+import { ArrowLeft, Play, Loader2, Shuffle } from 'lucide-react';
 import { PeerMesh } from '../../infrastructure/network/PeerMesh';
 import { SpawnResolver } from '../../useCases/game/SpawnResolver';
 import { PackCodec } from '../../useCases/game/PackCodec';
@@ -87,6 +88,7 @@ const DinosaurModel = ({ modelPath, activeMaterial, onMaterialsLoaded }: { model
 // Componente para Configuração do Dinossauro (UI)
 const DinosaurConfiguratorUI = ({ modelPath }: { modelPath: string }) => {
   const { dinoColors, setDinoColor } = useAppStore();
+  const t = useT();
   const [activeMaterial, setActiveMaterial] = useState<string | null>(null);
   const [materials, setMaterials] = useState<string[]>([]);
 
@@ -121,7 +123,7 @@ const DinosaurConfiguratorUI = ({ modelPath }: { modelPath: string }) => {
       {materials.length === 0 && (
         <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-slate-900/60 backdrop-blur-sm pointer-events-none">
           <Loader2 className="w-10 h-10 animate-spin text-orange-500 mb-4 shadow-orange-500" />
-          <span className="font-bold text-slate-300 animate-pulse tracking-wider">Montando Esqueleto 3D...</span>
+          <span className="font-bold text-slate-300 animate-pulse tracking-wider">{t('char.loading3d')}</span>
         </div>
       )}
 
@@ -133,7 +135,7 @@ const DinosaurConfiguratorUI = ({ modelPath }: { modelPath: string }) => {
           {activeMaterial && (
             <div className="p-3 bg-slate-900/90 backdrop-blur-md rounded-2xl shadow-2xl border border-slate-700 animate-in fade-in zoom-in duration-200">
               <div className="text-xs font-bold text-slate-400 mb-2 text-center">
-                Parte {materials.indexOf(activeMaterial) + 1}
+                {t('char.part', { n: materials.indexOf(activeMaterial) + 1 })}
               </div>
               <HexColorPicker 
                 color={dinoColors[activeMaterial] || '#ffffff'} 
@@ -150,10 +152,10 @@ const DinosaurConfiguratorUI = ({ modelPath }: { modelPath: string }) => {
                 onClick={() => setActiveMaterial(activeMaterial === matName ? null : matName)}
                 className={`w-8 h-8 rounded-full border-2 shadow-inner transition-all hover:scale-110 ${activeMaterial === matName ? 'border-orange-500 scale-110' : 'border-slate-600'}`}
                 style={{ backgroundColor: dinoColors[matName] || '#ffffff' }}
-                title={`Pintar Parte ${index + 1}`}
+                title={t('char.paintPart', { n: index + 1 })}
               />
             ))}
-            {materials.length === 0 && <span className="text-xs px-2 text-slate-500">Sem materiais customizáveis</span>}
+            {materials.length === 0 && <span className="text-xs px-2 text-slate-500">{t('char.noCustomMaterials')}</span>}
           </div>
         </div>
       )}
@@ -161,7 +163,23 @@ const DinosaurConfiguratorUI = ({ modelPath }: { modelPath: string }) => {
   );
 };
 
+const DINO_NAMES = [
+  'Thunderclaw', 'Rexblade', 'Shadowfang', 'Stormstrike', 'Venomspike',
+  'Titanstomp', 'Furyhorn', 'Doomtusk', 'Novaheart', 'Omegaforce',
+  'Bladeclaw', 'Stonehide', 'Ironjaw', 'Thornback', 'Saberfang',
+  'Duskstalker', 'Bouldertail', 'Firemane', 'Iceblood', 'Swiftstrike',
+  'Raptoris', 'Sauronix', 'Clawdius', 'Fangor', 'Terraxl',
+  'Stomper', 'Crushar', 'Striker', 'Hunter', 'Tracker',
+  'Spikeback', 'Razorclaw', 'Grimjaw', 'Warstomp', 'Wildfang',
+  'Chomper', 'Bitez', 'Muncher', 'Gnashar', 'Nomster',
+];
+
+function randomDinoName(): string {
+  return DINO_NAMES[Math.floor(Math.random() * DINO_NAMES.length)];
+}
+
 export const CharacterSelectionMenu: React.FC = () => {
+  const t = useT();
   const { 
     gameMode, setScreen, setGameMode,
     playerName, setPlayerName, 
@@ -184,7 +202,7 @@ export const CharacterSelectionMenu: React.FC = () => {
 
   const handleStartGame = async () => {
     if ((gameMode === 'global' || gameMode === 'party') && !playerName.trim()) {
-      alert("Por favor, insira um nome para o modo online.");
+      alert(t('char.alert.enterName'));
       return;
     }
 
@@ -198,7 +216,7 @@ export const CharacterSelectionMenu: React.FC = () => {
           setSessionCode(PeerMesh.getSessionCode());
         }
       } catch {
-        alert('Erro ao conectar no Party. Verifique o código e tente novamente.');
+        alert(t('char.alert.partyError'));
         return;
       }
     }
@@ -208,7 +226,7 @@ export const CharacterSelectionMenu: React.FC = () => {
         PeerMesh.setPlayerInfo(playerName, selectedDinoId, useAppStore.getState().dinoColors);
         await PeerMesh.startGlobal();
       } catch {
-        alert('Erro ao conectar no mundo global. Tente novamente.');
+        alert(t('char.alert.globalError'));
         return;
       }
     }
@@ -247,33 +265,42 @@ export const CharacterSelectionMenu: React.FC = () => {
             >
               <ArrowLeft className="w-6 h-6 text-slate-300" />
             </button>
-            <h2 className="text-3xl font-bold text-white">Criar Personagem</h2>
+            <h2 className="text-3xl font-bold text-white">{t('char.title')}</h2>
           </div>
 
-          {gameMode === 'online' && (
+          {(gameMode === 'global' || gameMode === 'party') && (
             <div className="space-y-2">
-              <label className="block text-sm font-medium text-slate-400">Nome do Jogador</label>
-              <input 
-                type="text" 
-                value={playerName}
-                onChange={(e) => setPlayerName(e.target.value)}
-                placeholder="Ex: T-Rex_Matador"
-                className="w-full bg-slate-700/50 border border-slate-600 rounded-lg p-3 text-white focus:outline-none focus:border-orange-500 transition-colors"
-                maxLength={15}
-              />
+              <label className="block text-sm font-medium text-slate-400">{t('char.playerName')}</label>
+              <div className="flex gap-2">
+                <input 
+                  type="text" 
+                  value={playerName}
+                  onChange={(e) => setPlayerName(e.target.value)}
+                  placeholder={t('char.playerNamePlaceholder')}
+                  className="flex-1 bg-slate-700/50 border border-slate-600 rounded-lg p-3 text-white focus:outline-none focus:border-orange-500 transition-colors"
+                  maxLength={15}
+                />
+                <button
+                  onClick={() => setPlayerName(randomDinoName())}
+                  className="px-3 bg-slate-700/50 hover:bg-slate-600 border border-slate-600 rounded-lg text-slate-300 hover:text-white transition-all active:scale-95"
+                  title="Random name"
+                >
+                  <Shuffle className="w-5 h-5" />
+                </button>
+              </div>
             </div>
           )}
 
           {gameMode === 'global' && (
             <div className="bg-blue-900/30 border border-blue-500/30 rounded-xl p-3 text-center">
-              <div className="text-xs text-blue-400 uppercase tracking-wider">🌍 Modo Global</div>
-              <div className="text-xs text-green-400 mt-1">Peer-to-Peer</div>
+              <div className="text-xs text-blue-400 uppercase tracking-wider">{t('char.mode.global')}</div>
+              <div className="text-xs text-green-400 mt-1">{t('char.p2p')}</div>
             </div>
           )}
 
           {(gameMode === 'party' || gameMode === 'global') && (
             <div className="space-y-2">
-              <label className="block text-sm font-medium text-slate-400">Código do Pack (opcional)</label>
+              <label className="block text-sm font-medium text-slate-400">{t('char.packCode')}</label>
               <input
                 type="text"
                 value={packCodeInput}
@@ -288,11 +315,11 @@ export const CharacterSelectionMenu: React.FC = () => {
                     setPackCode('');
                   }
                 }}
-                placeholder="Ex: TRIC-3x5"
+                placeholder={t('char.packCodePlaceholder')}
                 className="w-full bg-slate-700/50 border border-slate-600 rounded-lg p-3 text-white focus:outline-none focus:border-orange-500 transition-colors font-mono tracking-wider uppercase"
               />
               <p className="text-xs text-slate-500">
-                Insira um código para entrar no pack de outro jogador, ou deixe vazio para criar o seu próprio.
+                {t('char.packCodeDesc')}
               </p>
             </div>
           )}
@@ -302,13 +329,13 @@ export const CharacterSelectionMenu: React.FC = () => {
               onClick={() => setDietFilter('Carnivore')}
               className={`flex-1 py-2 rounded-md font-bold transition-all ${dietFilter === 'Carnivore' ? 'bg-red-500/20 text-red-400' : 'text-slate-500 hover:text-slate-300'}`}
             >
-              Carnívoro
+              {t('char.carnivore')}
             </button>
             <button 
               onClick={() => setDietFilter('Herbivore')}
               className={`flex-1 py-2 rounded-md font-bold transition-all ${dietFilter === 'Herbivore' ? 'bg-green-500/20 text-green-400' : 'text-slate-500 hover:text-slate-300'}`}
             >
-              Herbívoro
+              {t('char.herbivore')}
             </button>
           </div>
 
@@ -332,12 +359,12 @@ export const CharacterSelectionMenu: React.FC = () => {
         {/* Middle Column: 3D Preview */}
         <div className="hidden lg:flex w-[300px] xl:w-[400px] flex-col rounded-xl overflow-hidden relative border border-slate-700/50 bg-slate-900/50 justify-center">
           <div className="absolute top-4 left-4 z-10 bg-slate-800/80 backdrop-blur px-3 py-1 rounded-full text-xs font-bold text-slate-300 border border-slate-700">
-            Cores & Preview 3D
+            {t('char.preview')}
           </div>
           <Suspense fallback={
             <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-3">
               <Loader2 className="w-8 h-8 animate-spin text-orange-500" />
-              <span className="font-medium animate-pulse">Carregando Modelo 3D...</span>
+              <span className="font-medium animate-pulse">{t('char.loadingModel')}</span>
             </div>
           }>
             <DinosaurConfiguratorUI key={selectedDino.modelPath} modelPath={selectedDino.modelPath} />
@@ -356,7 +383,7 @@ export const CharacterSelectionMenu: React.FC = () => {
           <div className="space-y-4 mb-6">
             <div>
               <div className="flex justify-between text-sm mb-1">
-                <span className="text-slate-400">Vel. Caminhada</span>
+                <span className="text-slate-400">{t('char.walkSpeed')}</span>
                 <span className="font-bold">{selectedDino.walkSpeed}/10</span>
               </div>
               <div className="h-2 bg-slate-800 rounded-full overflow-hidden mb-3">
@@ -365,7 +392,7 @@ export const CharacterSelectionMenu: React.FC = () => {
             </div>
             <div>
               <div className="flex justify-between text-sm mb-1">
-                <span className="text-slate-400">Vel. Corrida</span>
+                <span className="text-slate-400">{t('char.runSpeed')}</span>
                 <span className="font-bold">{selectedDino.runSpeed}/25</span>
               </div>
               <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
@@ -374,7 +401,7 @@ export const CharacterSelectionMenu: React.FC = () => {
             </div>
             <div>
               <div className="flex justify-between text-sm mb-1">
-                <span className="text-slate-400">Força (Ataque)</span>
+                <span className="text-slate-400">{t('char.strength')}</span>
                 <span className="font-bold">{selectedDino.strength}/10</span>
               </div>
               <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
@@ -383,7 +410,7 @@ export const CharacterSelectionMenu: React.FC = () => {
             </div>
             <div>
               <div className="flex justify-between text-sm mb-1">
-                <span className="text-slate-400">Vitalidade (HP)</span>
+                <span className="text-slate-400">{t('char.vitality')}</span>
                 <span className="font-bold">{selectedDino.vitality}/10</span>
               </div>
               <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
@@ -398,7 +425,7 @@ export const CharacterSelectionMenu: React.FC = () => {
               className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-400 hover:to-red-500 text-white font-bold py-4 px-6 rounded-xl shadow-lg transition-all active:scale-95"
             >
               <Play className="w-5 h-5 fill-current" />
-              INICIAR PARTIDA
+              {t('char.start')}
             </button>
           </div>
         </div>

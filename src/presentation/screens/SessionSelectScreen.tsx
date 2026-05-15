@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { useAppStore } from '../../store/useAppStore';
+import { useT } from '../../i18n/useT';
 import { ArrowLeft, Globe, Users, Play } from 'lucide-react';
 
 export const SessionSelectScreen: React.FC = () => {
+  const t = useT();
   const { setScreen, setGameMode, setSessionCode } = useAppStore();
   const [partyMode, setPartyMode] = useState<'choose' | 'join'>('choose');
   const [joinCode, setJoinCode] = useState('');
@@ -40,20 +42,20 @@ export const SessionSelectScreen: React.FC = () => {
             <button onClick={() => setPartyMode('choose')} className="p-2 hover:bg-slate-700 rounded-full transition-colors">
               <ArrowLeft className="w-6 h-6 text-slate-300" />
             </button>
-            <h2 className="text-2xl font-bold text-white">Entrar no Party</h2>
+            <h2 className="text-2xl font-bold text-white">{t('session.join.title')}</h2>
           </div>
 
           <div className="space-y-4 mb-6">
-            <label className="block text-sm font-medium text-slate-400">Código do Party</label>
+            <label className="block text-sm font-medium text-slate-400">{t('session.join.code')}</label>
             <input
               type="text"
               value={joinCode}
               onChange={(e) => setJoinCode(e.target.value.toUpperCase().slice(0, 4))}
-              placeholder="Ex: ABCD"
+              placeholder={t('session.join.placeholder')}
               className="w-full bg-slate-700/50 border border-slate-600 rounded-lg p-3 text-white text-center text-2xl font-bold tracking-[0.5em] focus:outline-none focus:border-orange-500 transition-colors uppercase"
               maxLength={4}
             />
-            <p className="text-xs text-slate-500 text-center">Peça o código de 4 letras para o anfitrião</p>
+            <p className="text-xs text-slate-500 text-center">{t('session.join.instruction')}</p>
           </div>
 
           <button
@@ -62,7 +64,7 @@ export const SessionSelectScreen: React.FC = () => {
             className="w-full flex items-center justify-center gap-3 bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-400 hover:to-red-500 disabled:from-slate-700 disabled:to-slate-700 disabled:text-slate-500 text-white font-bold py-4 px-6 rounded-xl shadow-lg transition-all active:scale-95"
           >
             <Play className="w-5 h-5 fill-current" />
-            <span>Entrar no Party</span>
+            <span>{t('session.join.button')}</span>
           </button>
         </div>
       </div>
@@ -76,7 +78,7 @@ export const SessionSelectScreen: React.FC = () => {
           <button onClick={() => { setGameMode(null); setScreen('menu'); }} className="p-2 hover:bg-slate-700 rounded-full transition-colors">
             <ArrowLeft className="w-6 h-6 text-slate-300" />
           </button>
-          <h2 className="text-3xl font-bold text-white">Escolha seu Modo de Jogo</h2>
+          <h2 className="text-3xl font-bold text-white">{t('session.title')}</h2>
         </div>
 
         <div className="space-y-4">
@@ -87,20 +89,20 @@ export const SessionSelectScreen: React.FC = () => {
                 <Globe className="w-8 h-8 text-blue-400" />
               </div>
               <div className="flex-1">
-                <h3 className="text-xl font-bold text-white mb-1">Mundo Global</h3>
+                <h3 className="text-xl font-bold text-white mb-1">{t('session.global.title')}</h3>
                 <p className="text-sm text-slate-400 mb-4">
-                  Entre no mundo compartilhado com todos os jogadores do Chomp 3D!
+                  {t('session.global.desc')}
                 </p>
                 <div className="flex items-center gap-2 mb-4">
                   <span className="w-2 h-2 rounded-full bg-green-500" />
-                  <span className="text-xs text-green-400">Peer-to-Peer — sempre disponível</span>
+                  <span className="text-xs text-green-400">{t('session.global.alwaysAvailable')}</span>
                 </div>
                 <button
                   onClick={handleGlobal}
                   className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-blue-500 to-cyan-600 hover:from-blue-400 hover:to-cyan-500 text-white font-bold py-3 px-6 rounded-xl transition-all active:scale-95"
                 >
                   <Globe className="w-4 h-4" />
-                  <span>ENTRAR NO MUNDO</span>
+                  <span>{t('session.global.enter')}</span>
                 </button>
               </div>
             </div>
@@ -113,9 +115,9 @@ export const SessionSelectScreen: React.FC = () => {
                 <Users className="w-8 h-8 text-orange-400" />
               </div>
               <div className="flex-1">
-                <h3 className="text-xl font-bold text-white mb-1">Party Local</h3>
+                <h3 className="text-xl font-bold text-white mb-1">{t('session.party.title')}</h3>
                 <p className="text-sm text-slate-400 mb-4">
-                  Crie ou entre em uma sessão privada com amigos usando código de 4 letras
+                  {t('session.party.desc')}
                 </p>
                 <div className="flex gap-3">
                   <button
@@ -123,14 +125,14 @@ export const SessionSelectScreen: React.FC = () => {
                     className="flex-1 flex items-center justify-center gap-2 bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-400 hover:to-red-500 text-white font-bold py-3 px-6 rounded-xl transition-all active:scale-95"
                   >
                     <Users className="w-4 h-4" />
-                    <span>CRIAR SALA</span>
+                    <span>{t('session.party.create')}</span>
                   </button>
                   <button
                     onClick={() => setPartyMode('join')}
                     className="flex-1 flex items-center justify-center gap-2 bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 px-6 rounded-xl transition-all active:scale-95 border border-slate-600"
                   >
                     <Play className="w-4 h-4" />
-                    <span>ENTRAR COM CÓDIGO</span>
+                    <span>{t('session.party.enterCode')}</span>
                   </button>
                 </div>
               </div>
@@ -146,7 +148,7 @@ export const SessionSelectScreen: React.FC = () => {
               <div className="w-full border-t border-slate-700/50" />
             </div>
             <div className="relative flex justify-center">
-              <span className="bg-slate-900 px-3 text-[10px] text-slate-500 uppercase tracking-wider">ou jogue</span>
+              <span className="bg-slate-900 px-3 text-[10px] text-slate-500 uppercase tracking-wider">{t('session.orPlay')}</span>
             </div>
           </div>
           <button
@@ -154,7 +156,7 @@ export const SessionSelectScreen: React.FC = () => {
             className="mt-4 w-full flex items-center justify-center gap-3 bg-slate-800/50 hover:bg-slate-700/50 text-slate-300 hover:text-white font-bold py-3 px-6 rounded-xl transition-all active:scale-95 border border-slate-700/50 hover:border-green-500/30 group"
           >
             <Play className="w-5 h-5 text-green-400 group-hover:scale-110 transition-transform" />
-            <span>Offline — Jogue Sozinho</span>
+            <span>{t('session.offline')}</span>
           </button>
         </div>
       </div>

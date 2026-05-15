@@ -2,6 +2,7 @@ import React, { useMemo, Suspense } from 'react';
 import * as THREE from 'three';
 import { Canvas } from '@react-three/fiber';
 import { useAppStore } from '../../store/useAppStore';
+import { useT, tStandalone } from '../../i18n/useT';
 import { ArrowLeft, Settings } from 'lucide-react';
 import { MapGenerator } from '../../infrastructure/generation/MapGenerator';
 import { peerSession } from '../../infrastructure/network/PeerSession';
@@ -20,6 +21,7 @@ import { showPackInvite, showPackJoinRequest, showPackKicked, showPackInfo } fro
 
 // Sub-componente para Tela de Morte
 const DeathScreen: React.FC<{ onLeave: () => Promise<void> | void }> = ({ onLeave }) => {
+  const t = useT();
   const level = useAppStore(s => s.level);
   const timeAlive = useAppStore(s => s.timeAlive);
   const foodEaten = useAppStore(s => s.foodEaten);
@@ -35,21 +37,21 @@ const DeathScreen: React.FC<{ onLeave: () => Promise<void> | void }> = ({ onLeav
       onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
     >
-      <h1 className="text-6xl font-black text-red-600 mb-2 drop-shadow-[0_0_15px_rgba(220,38,38,0.8)]">VOCÊ MORREU</h1>
-      <h2 className="text-2xl text-slate-300 mb-8 font-light">Seu dinossauro virou comida...</h2>
+      <h1 className="text-6xl font-black text-red-600 mb-2 drop-shadow-[0_0_15px_rgba(220,38,38,0.8)]">{t('game.death.title')}</h1>
+      <h2 className="text-2xl text-slate-300 mb-8 font-light">{t('game.death.subtitle')}</h2>
 
       <div className="bg-slate-900/80 border border-slate-700 rounded-xl p-6 w-80 shadow-2xl mb-8 flex flex-col gap-4">
         <div className="flex justify-between items-center border-b border-slate-700 pb-2">
-          <span className="text-slate-400">Nível Alcançado</span>
+          <span className="text-slate-400">{t('game.death.level')}</span>
           <span className="text-white font-bold text-xl">{level}</span>
         </div>
         <div className="flex justify-between items-center border-b border-slate-700 pb-2">
-          <span className="text-slate-400">Tempo Sobrevivido</span>
-          <span className="text-white font-bold text-xl">{Math.floor(timeAlive / 60)}m {timeAlive % 60}s</span>
+          <span className="text-slate-400">{t('game.death.survived')}</span>
+          <span className="text-white font-bold text-xl">{t('game.timeFormat', { m: Math.floor(timeAlive / 60), s: timeAlive % 60 })}</span>
         </div>
         <div className="flex justify-between items-center">
-          <span className="text-slate-400">Comida Ingerida</span>
-          <span className="text-white font-bold text-xl">{foodEaten} unid.</span>
+          <span className="text-slate-400">{t('game.death.foodEaten')}</span>
+          <span className="text-white font-bold text-xl">{t('game.foodUnits', { n: foodEaten })}</span>
         </div>
       </div>
 
@@ -62,7 +64,7 @@ const DeathScreen: React.FC<{ onLeave: () => Promise<void> | void }> = ({ onLeav
         }}
         className="px-8 py-3 bg-red-600 hover:bg-red-500 text-white rounded-lg font-bold text-lg transition-all shadow-[0_0_20px_rgba(220,38,38,0.4)] hover:shadow-[0_0_30px_rgba(220,38,38,0.8)] cursor-pointer"
       >
-        {isOnline ? 'Voltar à Seleção' : 'Voltar ao Menu Principal'}
+        {isOnline ? t('game.death.backToSelect') : t('game.death.backToMenu')}
       </button>
     </div>
   );
@@ -78,12 +80,13 @@ const PlayerHUD: React.FC = () => {
   const stamina = useAppStore(s => s.stamina);
   const maxStamina = useAppStore(s => s.maxStamina);
   const isExhausted = useAppStore(s => s.isExhausted);
+  const t = useT();
 
   return (
     <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-80 md:w-[400px] pointer-events-none flex flex-col gap-2 z-20">
       <div className="text-white text-center font-bold drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] text-lg">
-        Nível {level} <span className="text-sm font-normal text-slate-300">
-          {level < 10 ? '(Filhote)' : level < 20 ? '(Jovem)' : '(Adulto)'}
+        {t('game.hud.level', { n: level })} <span className="text-sm font-normal text-slate-300">
+          {level < 10 ? t('game.hud.cub') : level < 20 ? t('game.hud.juvenile') : t('game.hud.adult')}
         </span>
       </div>
 
@@ -93,7 +96,7 @@ const PlayerHUD: React.FC = () => {
           style={{ width: `${Math.min(100, (xp / xpNeeded) * 100)}%` }}
         />
         <div className="absolute inset-0 flex items-center justify-center text-[10px] text-white font-bold drop-shadow-md">
-          XP: {Math.floor(xp)} / {xpNeeded}
+          {t('game.hud.xp', { current: Math.floor(xp), max: xpNeeded })}
         </div>
       </div>
 
@@ -103,7 +106,7 @@ const PlayerHUD: React.FC = () => {
           style={{ width: `${Math.min(100, (health / maxHealth) * 100)}%` }}
         />
         <div className="absolute inset-0 flex items-center justify-center text-[11px] text-white font-bold drop-shadow-md">
-          HP: {Math.floor(health)} / {maxHealth}
+          {t('game.hud.hp', { current: Math.floor(health), max: maxHealth })}
         </div>
       </div>
 
@@ -113,7 +116,7 @@ const PlayerHUD: React.FC = () => {
           style={{ width: `${Math.min(100, (stamina / maxStamina) * 100)}%` }}
         />
         <div className="absolute inset-0 flex items-center justify-center text-[9px] text-white font-bold drop-shadow-md">
-          {isExhausted ? '⚠ EXAUSTO' : `SP: ${Math.floor(stamina)} / ${maxStamina}`}
+          {isExhausted ? t('game.hud.exhausted') : t('game.hud.sp', { current: Math.floor(stamina), max: maxStamina })}
         </div>
       </div>
     </div>
@@ -121,6 +124,7 @@ const PlayerHUD: React.FC = () => {
 };
 
 export const GameScreen: React.FC = () => {
+  const t = useT();
   const setScreen = useAppStore(s => s.setScreen);
   const gameMode = useAppStore(s => s.gameMode);
   const playerName = useAppStore(s => s.playerName);
@@ -147,7 +151,7 @@ export const GameScreen: React.FC = () => {
       showPackKicked();
     };
     PeerMesh.onPackMemberUpdate = (members) => {
-      showPackInfo(`Bando: ${members.length} membro(s)`);
+      showPackInfo(tStandalone('pack.info', { n: members.length }));
     };
 
     return () => {
@@ -195,7 +199,7 @@ export const GameScreen: React.FC = () => {
             className="pointer-events-auto flex items-center gap-2 bg-slate-900/60 hover:bg-slate-800/80 backdrop-blur text-white px-4 py-2 rounded-lg border border-slate-700 transition-all"
           >
             <ArrowLeft className="w-4 h-4" />
-            Sair
+            {t('game.buttons.leave')}
           </button>
           <button
             onClick={(e) => { e.stopPropagation(); toggleSettingsInGame(); }}
@@ -203,13 +207,13 @@ export const GameScreen: React.FC = () => {
             className="pointer-events-auto flex items-center gap-2 bg-slate-900/60 hover:bg-slate-800/80 backdrop-blur text-white px-4 py-2 rounded-lg border border-slate-700 transition-all"
           >
             <Settings className="w-4 h-4" />
-            Config
+            {t('game.buttons.config')}
           </button>
         </div>
 
         <div className="pointer-events-auto bg-slate-900/60 backdrop-blur text-white px-6 py-3 rounded-lg border border-slate-700 shadow-lg text-center flex flex-col items-center">
           <div className="text-lg text-slate-400 uppercase tracking-wider mb-1">
-            {isOnline ? playerName : 'Single Player'}
+            {isOnline ? playerName : t('game.singlePlayer')}
           </div>
           <div className="font-bold text-orange-400 flex items-center gap-2">
             <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500 animate-pulse' : 'bg-slate-500'}`}></span>
@@ -217,7 +221,7 @@ export const GameScreen: React.FC = () => {
           </div>
           {isOnline && (
             <div className="text-lg mt-1 flex items-center justify-center gap-2 bg-slate-800/40 rounded-md px-2 py-0.5">
-              <span className="text-slate-300 font-medium">Sessão:</span>
+              <span className="text-slate-300 font-medium">{t('game.session')}</span>
               <span className="font-mono text-orange-400 font-bold tracking-wider">{sessionCode}</span>
               <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
             </div>

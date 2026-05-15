@@ -1,4 +1,5 @@
 import React from 'react';
+import { tStandalone } from './i18n/useT';
 
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -30,7 +31,7 @@ export class ErrorBoundary extends React.Component<
           padding: 40, fontFamily: 'monospace', background: '#0f172a', color: '#fbbf24',
           minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center'
         }}>
-          <h1 style={{ fontSize: 24, marginBottom: 16 }}>Erro na aplicação</h1>
+          <h1 style={{ fontSize: 24, marginBottom: 16 }}>{tStandalone('error.title')}</h1>
           <pre style={{
             background: '#1e293b', padding: 20, borderRadius: 8, maxWidth: 600,
             whiteSpace: 'pre-wrap', color: '#ef4444', fontSize: 13
@@ -45,7 +46,7 @@ export class ErrorBoundary extends React.Component<
               border: 'none', borderRadius: 8, fontWeight: 'bold', cursor: 'pointer'
             }}
           >
-            Recarregar
+            {tStandalone('error.reload')}
           </button>
         </div>
       );

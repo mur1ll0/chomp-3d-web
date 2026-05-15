@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { PeerMesh } from '../../infrastructure/network/PeerMesh';
+import { useT } from '../../i18n/useT';
 import { toastListeners, type Toast } from './packToast';
 import { UserCheck, UserX, UserPlus } from 'lucide-react';
 
 export const PackInviteToast: React.FC = () => {
+  const t = useT();
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const addToast = useCallback((toast: Toast) => {
@@ -64,14 +66,14 @@ export const PackInviteToast: React.FC = () => {
                 className="flex-1 flex items-center justify-center gap-1 bg-green-600 hover:bg-green-500 text-white text-xs font-bold py-2 rounded-lg transition-all"
               >
                 <UserCheck className="w-3 h-3" />
-                Aceitar
+                {t('pack.accept')}
               </button>
               <button
                 onClick={() => handleDeclineInvite(toast)}
                 className="flex-1 flex items-center justify-center gap-1 bg-red-600/40 hover:bg-red-600/60 border border-red-500/40 text-red-400 text-xs font-bold py-2 rounded-lg transition-all"
               >
                 <UserX className="w-3 h-3" />
-                Recusar
+                {t('pack.decline')}
               </button>
             </div>
           )}
@@ -83,20 +85,20 @@ export const PackInviteToast: React.FC = () => {
                 className="flex-1 flex items-center justify-center gap-1 bg-green-600 hover:bg-green-500 text-white text-xs font-bold py-2 rounded-lg transition-all"
               >
                 <UserPlus className="w-3 h-3" />
-                Aceitar
+                {t('pack.accept')}
               </button>
               <button
                 onClick={() => handleDeclineRequest(toast)}
                 className="flex-1 flex items-center justify-center gap-1 bg-red-600/40 hover:bg-red-600/60 border border-red-500/40 text-red-400 text-xs font-bold py-2 rounded-lg transition-all"
               >
                 <UserX className="w-3 h-3" />
-                Recusar
+                {t('pack.decline')}
               </button>
             </div>
           )}
 
           {toast.type === 'kicked' && (
-            <div className="text-[10px] text-slate-500 text-center">Clique para fechar</div>
+            <div className="text-[10px] text-slate-500 text-center">{t('pack.clickToClose')}</div>
           )}
         </div>
       ))}

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { PackMemberEntry } from '../infrastructure/network/messages';
 
+export type Language = 'en-US' | 'pt-BR';
 export type Screen = 'menu' | 'character-select' | 'settings' | 'game' | 'session-select';
 export type GameMode = 'single' | 'party' | 'global' | 'online' | 'offline' | null;
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
@@ -55,6 +56,28 @@ function loadControlBindings(): ControlBindings {
   }
 }
 
+const LANGUAGE_STORAGE_KEY = 'chomp3d.language';
+
+function loadLanguage(): Language {
+  if (typeof window === 'undefined') return 'en-US';
+  try {
+    const raw = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
+    if (raw === 'pt-BR' || raw === 'en-US') return raw;
+    return 'en-US';
+  } catch {
+    return 'en-US';
+  }
+}
+
+function persistLanguage(lang: Language): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(LANGUAGE_STORAGE_KEY, lang);
+  } catch {
+    // noop
+  }
+}
+
 function persistControlBindings(bindings: ControlBindings): void {
   if (typeof window === 'undefined') return;
   try {
@@ -65,6 +88,7 @@ function persistControlBindings(bindings: ControlBindings): void {
 }
 
 interface AppState {
+  language: Language;
   currentScreen: Screen;
   gameMode: GameMode;
   
@@ -119,6 +143,7 @@ interface AppState {
   networkTick: number;
 
   // Actions
+  setLanguage: (lang: Language) => void;
   setScreen: (screen: Screen) => void;
   setGameMode: (mode: GameMode) => void;
   setPlayerName: (name: string) => void;
@@ -161,6 +186,7 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>((set) => ({
+  language: loadLanguage(),
   currentScreen: 'menu',
   gameMode: null,
   
@@ -210,6 +236,7 @@ export const useAppStore = create<AppState>((set) => ({
   networkPlayers: [],
   networkTick: 0,
 
+  setLanguage: (lang) => set(() => { persistLanguage(lang); return { language: lang }; }),
   setScreen: (screen) => set({ currentScreen: screen }),
   setGameMode: (mode) => set({ gameMode: mode }),
   setPlayerName: (name) => set({ playerName: name }),
