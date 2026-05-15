@@ -16,6 +16,11 @@ import { PlayerPositionRef } from '../../useCases/game/PlayerPositionRef';
 import { calculateFinalScale, calculateInteractRadius, calculateBiteDamage, calculatePercentageDamage, calculateCarcassNutritionByLevel } from '../../domain/services/DinosaurService';
 import { useDinosaurAnimations } from '../hooks/useDinosaurAnimations';
 import { cloneSkinnedMesh } from '../utils/ThreeUtils';
+import { peerSession } from '../../infrastructure/network/PeerSession';
+import { PeerMesh } from '../../infrastructure/network/PeerMesh';
+import { SpawnResolver } from '../../useCases/game/SpawnResolver';
+import { PackCodec } from '../../useCases/game/PackCodec';
+import { WORLD_SEED } from '../../infrastructure/generation/MapGenerator';
 
 // Vetores reutilizáveis para evitar alocações por frame (GC pressure)
 const _forward = new THREE.Vector3();
@@ -141,6 +146,9 @@ export const PlayerDinosaur: React.FC = () => {
   const isActionLocked = useRef(false);
   const chunksRef = useRef<ChunkData[]>([]); // Cache de chunks próximos
   const lastChunkRef = useRef({ x: Infinity, z: Infinity });
+  const currentActionType = useRef(''); // 'Attack' | 'Eat' | ''
+  const lastMoveAngle = useRef(0); // Último targetAngle calculado (evita Euler singularity em PI)
+  const collisionFrameCounter = useRef(0); // Throttle colisão quando parado
 
   // Debug Zoom logic
   const zoomOffset = useRef(0);
@@ -156,6 +164,22 @@ export const PlayerDinosaur: React.FC = () => {
     window.addEventListener('wheel', handleWheel);
     return () => window.removeEventListener('wheel', handleWheel);
   }, []);
+
+  // Spawn determinístico — computado DURANTE o render (não em effect), usado no <group position>
+  const initialPosition = useMemo<[number, number, number]>(() => {
+    const resolver = new SpawnResolver(WORLD_SEED);
+    const packCode = useAppStore.getState().packCode;
+    if (packCode) {
+      const decoded = PackCodec.decode(packCode);
+      if (decoded && decoded.speciesId === selectedDinoId) {
+        const pos = resolver.resolveByPackCode(selectedDinoId, decoded.chunkX, decoded.chunkZ);
+        return [pos.worldX, 0, pos.worldZ];
+      }
+    }
+    const herbivoreRoster = DINOSAUR_ROSTER.filter(d => d.diet === 'Herbivore').map(d => d.id);
+    const pos = resolver.resolve(selectedDinoId, herbivoreRoster, dinoStats.diet);
+    return [pos.worldX, 0, pos.worldZ];
+  }, [selectedDinoId, dinoStats.diet]);
 
   // Calcula escala global base e escala final com base no Level
   const GLOBAL_SCALE_MODIFIER = 0.15;
@@ -200,6 +224,7 @@ export const PlayerDinosaur: React.FC = () => {
 
     isActionLocked.current = true;
     setIsActing(true);
+    currentActionType.current = 'Eat';
     const action = playAnimation('Eat', false);
     const durationMs = action && action.getClip() ? action.getClip().duration * 1000 : 1500;
 
@@ -215,6 +240,7 @@ export const PlayerDinosaur: React.FC = () => {
     setTimeout(() => {
       isActionLocked.current = false;
       setIsActing(false);
+      currentActionType.current = '';
       playAnimation('Idle');
     }, durationMs);
   }, [dinoStats.strength, level, playAnimation]);
@@ -223,6 +249,7 @@ export const PlayerDinosaur: React.FC = () => {
     if (isActionLocked.current) return;
     isActionLocked.current = true;
     setIsActing(true);
+    currentActionType.current = 'Attack';
     const action = playAnimation('Attack', false);
     const durationMs = action && action.getClip() ? action.getClip().duration * 1000 : 1000;
 
@@ -233,6 +260,10 @@ export const PlayerDinosaur: React.FC = () => {
       const activeNPCs = NPCManager.getActiveNPCs();
 
       for (const npc of activeNPCs) {
+        // Em modo online, não pode atacar aliados do mesmo bando
+        if (useAppStore.getState().onlineRole) {
+          // NPCs não têm bando — ataque normalmente
+        }
         const event = playerAttackNPC(
           px, pz, finalScale,
           dinoStats.strength, level, npc
@@ -252,6 +283,7 @@ export const PlayerDinosaur: React.FC = () => {
     setTimeout(() => {
       isActionLocked.current = false;
       setIsActing(false);
+      currentActionType.current = '';
       playAnimation('Idle');
     }, durationMs);
   }, [dinoStats.strength, finalScale, level, playAnimation]);
@@ -305,33 +337,65 @@ export const PlayerDinosaur: React.FC = () => {
     };
   }, [controlBindings.attack, takeDamage, triggerAttackAction]);
 
+  // Counter for periodic input sync
+  const inputSyncCounter = useRef(0);
+
   // Movement Logic (8-directional relative to camera)
   useFrame((_, rawDelta) => {
     if (!playerRef.current) return;
 
+    // Sincroniza PlayerPositionRef no TOPO — antes de qualquer early return
+    const pRef = playerRef.current;
+
+    // Helper de envio de input para rede (chamado de múltiplos pontos)
+    const sendClientInput = (isAttacking: boolean, isEating: boolean, isMoving: boolean, isSprinting: boolean) => {
+      if (useAppStore.getState().onlineRole !== 'client') return;
+      inputSyncCounter.current++;
+      if (inputSyncCounter.current < 3) return;
+      inputSyncCounter.current = 0;
+      const appState = useAppStore.getState();
+      peerSession.sendInput({
+        moveX: isMoving ? (keys[controlBindings.moveForward] ? 1 : keys[controlBindings.moveBackward] ? -1 : 0) : 0,
+        moveZ: 0,
+        isRunning: isSprinting,
+        attacking: isAttacking,
+        eating: isEating,
+        eatingTargetId: appState.interactableEdibleId ?? '',
+        jumping: !isGrounded.current,
+        rotY: PlayerPositionRef.rotY,
+        posX: PlayerPositionRef.x,
+        posY: PlayerPositionRef.y,
+        posZ: PlayerPositionRef.z,
+        level,
+        health: appState.health,
+        maxHealth: appState.maxHealth,
+        isDead,
+        animationIntent: PlayerPositionRef.animationIntent,
+      });
+    };
+    PlayerPositionRef.x = pRef.position.x;
+    PlayerPositionRef.y = pRef.position.y;
+    PlayerPositionRef.z = pRef.position.z;
+    // Use lastMoveAngle (computed from atan2) instead of pRef.rotation.y
+    // to avoid Euler angle singularity at PI (180° rotation decomposes to Euler(PI,0,PI))
+    PlayerPositionRef.rotY = lastMoveAngle.current;
+    PlayerPositionRef.scale = finalScale;
+    PlayerPositionRef.level = level;
+    PlayerPositionRef.diet = dinoStats.diet;
+    PlayerPositionRef.strength = dinoStats.strength;
+    PlayerPositionRef.isDead = isDead;
+    PlayerPositionRef.collisionRadius = dinoStats.collisionRadius;
+    PlayerPositionRef.collisionHeight = dinoStats.collisionHeight;
+    PlayerPositionRef.interactRadius = dinoStats.interactRadius;
+
     // Evita teleporte de física se houver lag spike (stutter de carregamento de chunk)
     const delta = Math.min(rawDelta, 0.05);
-    const inWater = getWaterValue(playerRef.current.position.x, playerRef.current.position.z) > WATER_THRESHOLD;
+    const inWater = getWaterValue(PlayerPositionRef.x, PlayerPositionRef.z) > WATER_THRESHOLD;
     let groundY = inWater ? -3 * finalScale : 0;
 
     if (isDead) {
-      // Sincroniza estado global mesmo com retorno antecipado.
-      // Sem isso, NPCs podem continuar tratando o player como vivo.
-      PlayerPositionRef.x = playerRef.current.position.x;
-      PlayerPositionRef.y = playerRef.current.position.y;
-      PlayerPositionRef.z = playerRef.current.position.z;
-      PlayerPositionRef.rotY = playerRef.current.rotation.y;
-      PlayerPositionRef.scale = finalScale;
-      PlayerPositionRef.level = level;
-      PlayerPositionRef.diet = dinoStats.diet;
-      PlayerPositionRef.strength = dinoStats.strength;
-      PlayerPositionRef.isDead = true;
-      PlayerPositionRef.collisionRadius = dinoStats.collisionRadius;
-      PlayerPositionRef.collisionHeight = dinoStats.collisionHeight;
-      PlayerPositionRef.interactRadius = dinoStats.interactRadius;
-
+      PlayerPositionRef.animationIntent = 'Death';
       playAnimation('Death', false);
-      // Mesmo morto, a gravidade e colisões devem continuar
       if (!isGrounded.current) {
         const gravityForce = 100;
         yVelocity.current -= gravityForce * delta;
@@ -340,8 +404,10 @@ export const PlayerDinosaur: React.FC = () => {
       return;
     }
 
-    // Se estiver no meio de uma ação (Comer/Atacar), não fazemos nada até terminar
+    // Durante ação (Attack/Eat), sincroniza animationIntent e envia input para rede
     if (isActionLocked.current) {
+      PlayerPositionRef.animationIntent = currentActionType.current || 'Attack';
+      sendClientInput(currentActionType.current === 'Attack', currentActionType.current === 'Eat', false, false);
       return;
     }
 
@@ -446,6 +512,7 @@ export const PlayerDinosaur: React.FC = () => {
       const rampedSpeed = moveSpeed * movementRamp.current;
 
       const targetAngle = Math.atan2(_moveDir.x, _moveDir.z);
+      lastMoveAngle.current = targetAngle;
       _tempQuatMove.setFromAxisAngle(_forward.set(0, 1, 0), targetAngle);
 
       playerRef.current.quaternion.slerp(_tempQuatMove, turnSpeed * delta);
@@ -462,8 +529,12 @@ export const PlayerDinosaur: React.FC = () => {
       }
     }
 
-    // ----- CÁLCULO DE COLISÕES PROCEDURAIS -----
-    // Atualiza a posição do chunk do jogador na Store para sincronizar com a renderização
+    // ----- CÁLCULO DE COLISÕES PROCEDURAIS (Throttled) -----
+    // Só roda colisão completa a cada 3 frames quando parado, ou sempre quando se move
+    const COLLISION_FRAME_SKIP = 3;
+    collisionFrameCounter.current = (collisionFrameCounter.current + 1) % COLLISION_FRAME_SKIP;
+    const shouldRunCollision = moving || collisionFrameCounter.current === 0;
+
     const CHUNK_SIZE = 50;
     const px = playerRef.current.position.x;
     const pz = playerRef.current.position.z;
@@ -480,115 +551,118 @@ export const PlayerDinosaur: React.FC = () => {
     }
 
     const chunks = chunksRef.current;
-    // Cap do raio: dinos gigantes (nível 100+) não precisam colidir com tudo a 10m de distância
-    const playerRadius = Math.min(dinoStats.collisionRadius * finalScale, 10.0);
 
-    for (const chunk of chunks) {
-      for (const tree of chunk.trees) {
-        const treeRadius = tree.collisionRadius;
-        const dx = px - tree.position[0];
-        const dz = pz - tree.position[2];
+    if (shouldRunCollision) {
+      // Cap do raio: dinos gigantes (nível 100+) não precisam colidir com tudo a 10m de distância
+      const playerRadius = Math.min(dinoStats.collisionRadius * finalScale, 10.0);
 
-        // Early rejection: distância quadrada (evita Math.sqrt para objetos longe)
-        const maxDist = playerRadius + treeRadius;
-        const distSq = dx * dx + dz * dz;
-        if (distSq >= maxDist * maxDist) continue;
+      for (const chunk of chunks) {
+        for (const tree of chunk.trees) {
+          const treeRadius = tree.collisionRadius;
+          const dx = px - tree.position[0];
+          const dz = pz - tree.position[2];
 
-        const treeHeight = tree.collisionHeight;
-        if (py >= treeHeight) continue; // Acima da árvore, sem colisão
+          // Early rejection: distância quadrada (evita Math.sqrt para objetos longe)
+          const maxDist = playerRadius + treeRadius;
+          const distSq = dx * dx + dz * dz;
+          if (distSq >= maxDist * maxDist) continue;
 
-        const dist = Math.sqrt(distSq) || 0.001;
-        const overlap = maxDist - dist;
-        playerRef.current.position.x += (dx / dist) * overlap * 1.1;
-        playerRef.current.position.z += (dz / dist) * overlap * 1.1;
-      }
+          const treeHeight = tree.collisionHeight;
+          if (py >= treeHeight) continue; // Acima da árvore, sem colisão
 
-      // Colisão com Pedras (Com suporte a pular por cima)
-      for (const rock of chunk.rocks) {
-        const rockRadius = rock.collisionRadius;
-        const dx = px - rock.position[0];
-        const dz = pz - rock.position[2];
-
-        // Early rejection com distância quadrada
-        const maxDist = playerRadius + rockRadius;
-        const distSq = dx * dx + dz * dz;
-        if (distSq >= maxDist * maxDist) continue;
-
-        const rockHeight = rock.collisionHeight;
-        const dist = Math.sqrt(distSq) || 0.001;
-        const maxStepHeight = 2.5 * finalScale;
-
-        if (py >= rockHeight - maxStepHeight) {
-          groundY = Math.max(groundY, rockHeight);
-          if (py < rockHeight) {
-            playerRef.current.position.y = rockHeight;
-            yVelocity.current = 0;
-            isGrounded.current = true;
-          }
-        } else {
+          const dist = Math.sqrt(distSq) || 0.001;
           const overlap = maxDist - dist;
           playerRef.current.position.x += (dx / dist) * overlap * 1.1;
           playerRef.current.position.z += (dz / dist) * overlap * 1.1;
         }
+
+        // Colisão com Pedras (Com suporte a pular por cima)
+        for (const rock of chunk.rocks) {
+          const rockRadius = rock.collisionRadius;
+          const dx = px - rock.position[0];
+          const dz = pz - rock.position[2];
+
+          // Early rejection com distância quadrada
+          const maxDist = playerRadius + rockRadius;
+          const distSq = dx * dx + dz * dz;
+          if (distSq >= maxDist * maxDist) continue;
+
+          const rockHeight = rock.collisionHeight;
+          const dist = Math.sqrt(distSq) || 0.001;
+          const maxStepHeight = 2.5 * finalScale;
+
+          if (py >= rockHeight - maxStepHeight) {
+            groundY = Math.max(groundY, rockHeight);
+            if (py < rockHeight) {
+              playerRef.current.position.y = rockHeight;
+              yVelocity.current = 0;
+              isGrounded.current = true;
+            }
+          } else {
+            const overlap = maxDist - dist;
+            playerRef.current.position.x += (dx / dist) * overlap * 1.1;
+            playerRef.current.position.z += (dz / dist) * overlap * 1.1;
+          }
+        }
       }
     }
 
-    // ----- DETECÇÃO DE ALIMENTOS PRÓXIMOS -----
+    // ----- DETECÇÃO DE ALIMENTOS PRÓXIMOS (também throttled) -----
     let nearestEdibleId: string | null = null;
     let minEdibleDist = Infinity;
     const interactRadiusSq = (interactRadius + 5) * (interactRadius + 5);
 
-    const edibleStates = appState.edibleStates;
-    const diet = dinoStats.diet;
+    if (shouldRunCollision) {
+      const edibleStates = appState.edibleStates;
+      const diet = dinoStats.diet;
 
-    for (const chunk of chunks) {
-      if (chunk.edibles) {
-        for (const edible of chunk.edibles) {
-          // Filtro rápido de dieta
-          if (
-            (diet === 'Herbivore' && edible.type === 'Plant') ||
-            (diet === 'Carnivore' && edible.type === 'Meat')
-          ) {
-            const dx = px - edible.position[0];
-            const dz = pz - edible.position[2];
-            const distSq = dx * dx + dz * dz;
+      for (const chunk of chunks) {
+        if (chunk.edibles) {
+          for (const edible of chunk.edibles) {
+            // Filtro rápido de dieta
+            if (
+              (diet === 'Herbivore' && edible.type === 'Plant') ||
+              (diet === 'Carnivore' && edible.type === 'Meat')
+            ) {
+              const dx = px - edible.position[0];
+              const dz = pz - edible.position[2];
+              const distSq = dx * dx + dz * dz;
 
-            if (distSq < interactRadiusSq) {
-              const remainingScale = edibleStates[edible.id] ?? 1.0;
-              if (remainingScale > 0) {
-                const dist = Math.sqrt(distSq) - (edible.scale * remainingScale * 0.8);
-                if (dist < interactRadius && dist < minEdibleDist) {
-                  minEdibleDist = dist;
-                  nearestEdibleId = edible.id;
+              if (distSq < interactRadiusSq) {
+                const remainingScale = edibleStates[edible.id] ?? 1.0;
+                if (remainingScale > 0) {
+                  const dist = Math.sqrt(distSq) - (edible.scale * remainingScale * 0.8);
+                  if (dist < interactRadius && dist < minEdibleDist) {
+                    minEdibleDist = dist;
+                    nearestEdibleId = edible.id;
+                  }
                 }
               }
             }
           }
         }
       }
-    }
 
-    // 4b. CARCAÇAS DE NPCs (CARNE)
-    if (diet === 'Carnivore') {
-      const activeNPCs = NPCManager.getActiveNPCs();
-      for (const npc of activeNPCs) {
-        if (npc.state === NPCState.Dead) {
-          const dx = px - npc.posX;
-          const dz = pz - npc.posZ;
-          const distSq = dx * dx + dz * dz;
+      // 4b. CARCAÇAS DE NPCs (CARNE)
+      if (diet === 'Carnivore') {
+        const activeNPCs = NPCManager.getActiveNPCs();
+        for (const npc of activeNPCs) {
+          if (npc.state === NPCState.Dead) {
+            const dx = px - npc.posX;
+            const dz = pz - npc.posZ;
+            const distSq = dx * dx + dz * dz;
 
-          if (distSq < interactRadiusSq) {
-            const remainingScale = edibleStates[npc.id] ?? 1.0;
-            if (remainingScale > 0) {
-              const npcStats = DINOSAUR_ROSTER.find(d => d.id === npc.speciesId);
-              const npcBaseScale = npcStats ? getNPCScaleFactor(npc.level, npcStats) : 0.5;
-              // Carcaças de NPCs são tratadas como alvos de Meat com escala baseada no dino original
-              // Multiplicamos por 4.0 para bater com a escala de recurso definida no NPCManager e EdiblesManager
-              const carcassScale = npcBaseScale * 4.0;
-              const dist = Math.sqrt(distSq) - (carcassScale * remainingScale * 1.0);
-              if (dist < interactRadius && dist < minEdibleDist) {
-                minEdibleDist = dist;
-                nearestEdibleId = npc.id;
+            if (distSq < interactRadiusSq) {
+              const remainingScale = edibleStates[npc.id] ?? 1.0;
+              if (remainingScale > 0) {
+                const npcStats = DINOSAUR_ROSTER.find(d => d.id === npc.speciesId);
+                const npcBaseScale = npcStats ? getNPCScaleFactor(npc.level, npcStats) : 0.5;
+                const carcassScale = npcBaseScale * 4.0;
+                const dist = Math.sqrt(distSq) - (carcassScale * remainingScale * 1.0);
+                if (dist < interactRadius && dist < minEdibleDist) {
+                  minEdibleDist = dist;
+                  nearestEdibleId = npc.id;
+                }
               }
             }
           }
@@ -627,20 +701,36 @@ export const PlayerDinosaur: React.FC = () => {
       };
     }
 
-    // Atualiza a referência global da posição do jogador (para NPCManager)
-    // Importante: usar a posição do mundo se houver algum offset, mas aqui o group é o container principal
+    // Re-sincroniza posição após movimento e determina animationIntent
     PlayerPositionRef.x = playerRef.current.position.x;
     PlayerPositionRef.y = playerRef.current.position.y;
     PlayerPositionRef.z = playerRef.current.position.z;
-    PlayerPositionRef.rotY = playerRef.current.rotation.y;
-    PlayerPositionRef.scale = finalScale;
-    PlayerPositionRef.level = level;
-    PlayerPositionRef.diet = dinoStats.diet;
-    PlayerPositionRef.strength = dinoStats.strength;
-    PlayerPositionRef.isDead = isDead;
-    PlayerPositionRef.collisionRadius = dinoStats.collisionRadius;
-    PlayerPositionRef.collisionHeight = dinoStats.collisionHeight;
-    PlayerPositionRef.interactRadius = dinoStats.interactRadius;
+    // rotY preservado do topo do frame (lastMoveAngle), não lê rotation.y (Euler singularity)
+
+    // animationIntent normal (after movement code runs = não locked/dead)
+    const intentNotGrounded = !isGrounded.current;
+    PlayerPositionRef.animationIntent = intentNotGrounded ? 'Jump' : moving ? (isRunning ? 'Run' : 'Walk') : 'Idle';
+
+    // Client online: envia posição/estado para o host
+    sendClientInput(false, false, moving, isRunning);
+
+    // PeerMesh (Party/Global): envia estado para renderização remota
+    const pmGameMode = useAppStore.getState().gameMode;
+    if (pmGameMode === 'party' || pmGameMode === 'global') {
+      PeerMesh.sendPlayerState({
+        peerId: PeerMesh.getOwnPeerId(),
+        posX: PlayerPositionRef.x,
+        posY: PlayerPositionRef.y,
+        posZ: PlayerPositionRef.z,
+        rotY: PlayerPositionRef.rotY,
+        health: useAppStore.getState().health,
+        maxHealth: useAppStore.getState().maxHealth,
+        isDead: PlayerPositionRef.isDead,
+        animationIntent: PlayerPositionRef.animationIntent,
+        level: PlayerPositionRef.level,
+        scale: PlayerPositionRef.scale,
+      });
+    }
   });
 
   // Geometrias de debug compartilhadas (Unidade 1x1x1 para escala fácil)
@@ -669,7 +759,7 @@ export const PlayerDinosaur: React.FC = () => {
   return (
     <>
       {!isDead && <PointerLockControls enabled={!isActing} />}
-      <group ref={playerRef} position={[0, 0, 0]}>
+      <group ref={playerRef} position={initialPosition}>
         <group scale={[finalScale, finalScale, finalScale]}>
           <primitive object={playerModel} />
         </group>

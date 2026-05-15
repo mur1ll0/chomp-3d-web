@@ -2,6 +2,10 @@ import React, { useState, Suspense, startTransition } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { DINOSAUR_ROSTER, type Diet } from '../../domain/models/DinosaurStats';
 import { ArrowLeft, Play, Loader2 } from 'lucide-react';
+import { PeerMesh } from '../../infrastructure/network/PeerMesh';
+import { SpawnResolver } from '../../useCases/game/SpawnResolver';
+import { PackCodec } from '../../useCases/game/PackCodec';
+import { WORLD_SEED } from '../../infrastructure/generation/MapGenerator';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Center, Environment, useGLTF, Bounds } from '@react-three/drei';
 import * as THREE from 'three';
@@ -159,11 +163,14 @@ const DinosaurConfiguratorUI = ({ modelPath }: { modelPath: string }) => {
 
 export const CharacterSelectionMenu: React.FC = () => {
   const { 
-    gameMode, setScreen, 
+    gameMode, setScreen, setGameMode,
     playerName, setPlayerName, 
-    selectedDinoId, setSelectedDinoId
+    selectedDinoId, setSelectedDinoId,
+    sessionCode, setSessionCode,
+    setPackCode,
   } = useAppStore();
 
+  const [packCodeInput, setPackCodeInput] = useState('');
   const [dietFilter, setDietFilter] = useState<Diet>('Carnivore');
 
   const filteredDinos = DINOSAUR_ROSTER.filter(d => d.diet === dietFilter);
@@ -175,12 +182,56 @@ export const CharacterSelectionMenu: React.FC = () => {
     });
   };
 
-  const handleStartGame = () => {
-    if (gameMode === 'online' && !playerName.trim()) {
+  const handleStartGame = async () => {
+    if ((gameMode === 'global' || gameMode === 'party') && !playerName.trim()) {
       alert("Por favor, insira um nome para o modo online.");
       return;
     }
+
+    if (gameMode === 'party') {
+      try {
+        PeerMesh.setPlayerInfo(playerName, selectedDinoId, useAppStore.getState().dinoColors);
+        await PeerMesh.startParty(sessionCode || undefined);
+        if (sessionCode) {
+          setSessionCode(PeerMesh.getSessionCode());
+        } else {
+          setSessionCode(PeerMesh.getSessionCode());
+        }
+      } catch {
+        alert('Erro ao conectar no Party. Verifique o código e tente novamente.');
+        return;
+      }
+    }
+
+    if (gameMode === 'global') {
+      try {
+        PeerMesh.setPlayerInfo(playerName, selectedDinoId, useAppStore.getState().dinoColors);
+        await PeerMesh.startGlobal();
+      } catch {
+        alert('Erro ao conectar no mundo global. Tente novamente.');
+        return;
+      }
+    }
+
+    // Auto-gera código do pack se não entrou em um existente
+    if (gameMode === 'global' || gameMode === 'party') {
+      if (!useAppStore.getState().packCode) {
+        const herbivoreRoster = DINOSAUR_ROSTER.filter(d => d.diet === 'Herbivore').map(d => d.id);
+        const resolver = new SpawnResolver(WORLD_SEED);
+        const pos = resolver.resolve(selectedDinoId, herbivoreRoster, selectedDino.diet);
+        setPackCode(PackCodec.fromSpawnPosition(selectedDinoId, pos.chunkX, pos.chunkZ));
+      }
+      PeerMesh.createPack();
+    }
+
     setScreen('game');
+  };
+
+  const handleBack = () => {
+    setSessionCode('');
+    setPackCode('');
+    setGameMode(null);
+    setScreen('session-select');
   };
 
   return (
@@ -191,7 +242,7 @@ export const CharacterSelectionMenu: React.FC = () => {
         <div className="flex-1 flex flex-col gap-6">
           <div className="flex items-center gap-4">
             <button 
-              onClick={() => setScreen('menu')}
+              onClick={handleBack}
               className="p-2 hover:bg-slate-700 rounded-full transition-colors"
             >
               <ArrowLeft className="w-6 h-6 text-slate-300" />
@@ -201,7 +252,7 @@ export const CharacterSelectionMenu: React.FC = () => {
 
           {gameMode === 'online' && (
             <div className="space-y-2">
-              <label className="block text-sm font-medium text-slate-400">Nome do Jogador (ID da Sessão)</label>
+              <label className="block text-sm font-medium text-slate-400">Nome do Jogador</label>
               <input 
                 type="text" 
                 value={playerName}
@@ -210,6 +261,39 @@ export const CharacterSelectionMenu: React.FC = () => {
                 className="w-full bg-slate-700/50 border border-slate-600 rounded-lg p-3 text-white focus:outline-none focus:border-orange-500 transition-colors"
                 maxLength={15}
               />
+            </div>
+          )}
+
+          {gameMode === 'global' && (
+            <div className="bg-blue-900/30 border border-blue-500/30 rounded-xl p-3 text-center">
+              <div className="text-xs text-blue-400 uppercase tracking-wider">🌍 Modo Global</div>
+              <div className="text-xs text-green-400 mt-1">Peer-to-Peer</div>
+            </div>
+          )}
+
+          {(gameMode === 'party' || gameMode === 'global') && (
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-slate-400">Código do Pack (opcional)</label>
+              <input
+                type="text"
+                value={packCodeInput}
+                onChange={(e) => {
+                  setPackCodeInput(e.target.value.toUpperCase());
+                  if (e.target.value.trim()) {
+                    const decoded = PackCodec.decode(e.target.value.trim().toUpperCase());
+                    if (decoded && decoded.speciesId === selectedDinoId) {
+                      setPackCode(e.target.value.trim().toUpperCase());
+                    }
+                  } else {
+                    setPackCode('');
+                  }
+                }}
+                placeholder="Ex: TRIC-3x5"
+                className="w-full bg-slate-700/50 border border-slate-600 rounded-lg p-3 text-white focus:outline-none focus:border-orange-500 transition-colors font-mono tracking-wider uppercase"
+              />
+              <p className="text-xs text-slate-500">
+                Insira um código para entrar no pack de outro jogador, ou deixe vazio para criar o seu próprio.
+              </p>
             </div>
           )}
 

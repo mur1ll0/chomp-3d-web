@@ -9,18 +9,30 @@ export class NPCDespawnSystem {
     spawnedChunks: Set<string>;
     playerChunkX: number;
     playerChunkZ: number;
+    remoteChunks?: Array<{ x: number; z: number }>;
   }): string[] {
-    const { npcs, spawnedChunks, playerChunkX, playerChunkZ } = args;
+    const { npcs, spawnedChunks, playerChunkX, playerChunkZ, remoteChunks } = args;
     const keysToRemove: string[] = [];
 
     for (const [id, npc] of npcs) {
       const npcChunkX = Math.floor(npc.posX / CHUNK_SIZE);
       const npcChunkZ = Math.floor(npc.posZ / CHUNK_SIZE);
 
-      const dx = Math.abs(npcChunkX - playerChunkX);
-      const dz = Math.abs(npcChunkZ - playerChunkZ);
+      // Check if NPC is near ANY player (host or remote)
+      const dxHost = Math.abs(npcChunkX - playerChunkX);
+      const dzHost = Math.abs(npcChunkZ - playerChunkZ);
+      let nearAnyPlayer = dxHost <= DESPAWN_RADIUS && dzHost <= DESPAWN_RADIUS;
 
-      if (dx > DESPAWN_RADIUS || dz > DESPAWN_RADIUS) {
+      if (!nearAnyPlayer && remoteChunks) {
+        for (const rc of remoteChunks) {
+          if (Math.abs(npcChunkX - rc.x) <= DESPAWN_RADIUS && Math.abs(npcChunkZ - rc.z) <= DESPAWN_RADIUS) {
+            nearAnyPlayer = true;
+            break;
+          }
+        }
+      }
+
+      if (!nearAnyPlayer) {
         keysToRemove.push(id);
         spawnedChunks.delete(npc.spawnChunkId);
       }

@@ -4,6 +4,8 @@ import { Canvas } from '@react-three/fiber';
 import { useAppStore } from '../../store/useAppStore';
 import { ArrowLeft, Settings } from 'lucide-react';
 import { MapGenerator } from '../../infrastructure/generation/MapGenerator';
+import { peerSession } from '../../infrastructure/network/PeerSession';
+import { PeerMesh } from '../../infrastructure/network/PeerMesh';
 import { ProceduralMap } from '../canvas/ProceduralMap';
 import { PlayerDinosaur } from '../canvas/PlayerDinosaur';
 import { EdiblesManager } from '../canvas/EdiblesManager';
@@ -11,14 +13,20 @@ import { SettingsMenu } from './SettingsMenu';
 import { DynamicEnvironment } from '../canvas/DynamicEnvironment';
 import { DebugPanel } from './DebugPanel';
 import { NPCDinosaurs } from '../canvas/NPCDinosaurs';
+import { RemotePlayers } from '../canvas/RemotePlayers';
+import { NetworkPanel } from './NetworkPanel';
+import { PackInviteToast } from './PackInviteToast';
+import { showPackInvite, showPackJoinRequest, showPackKicked, showPackInfo } from './packToast';
 
 // Sub-componente para Tela de Morte
-const DeathScreen: React.FC = () => {
+const DeathScreen: React.FC<{ onLeave: () => Promise<void> | void }> = ({ onLeave }) => {
   const level = useAppStore(s => s.level);
   const timeAlive = useAppStore(s => s.timeAlive);
   const foodEaten = useAppStore(s => s.foodEaten);
   const resetGameStats = useAppStore(s => s.resetGameStats);
   const setScreen = useAppStore(s => s.setScreen);
+  const gameMode = useAppStore(s => s.gameMode);
+  const isOnline = gameMode === 'party' || gameMode === 'global';
 
   return (
     <div 
@@ -46,14 +54,15 @@ const DeathScreen: React.FC = () => {
       </div>
 
       <button
-        onClick={(e) => {
+        onClick={async (e) => {
           e.stopPropagation();
+          if (isOnline) await onLeave();
           resetGameStats();
-          setScreen('menu');
+          setScreen(isOnline ? 'character-select' : 'menu');
         }}
         className="px-8 py-3 bg-red-600 hover:bg-red-500 text-white rounded-lg font-bold text-lg transition-all shadow-[0_0_20px_rgba(220,38,38,0.4)] hover:shadow-[0_0_30px_rgba(220,38,38,0.8)] cursor-pointer"
       >
-        Voltar ao Menu Principal
+        {isOnline ? 'Voltar à Seleção' : 'Voltar ao Menu Principal'}
       </button>
     </div>
   );
@@ -121,8 +130,43 @@ export const GameScreen: React.FC = () => {
   const renderDistance = useAppStore(s => s.renderDistance);
   const playerChunkPos = useAppStore(s => s.playerChunkPos);
   const isDead = useAppStore(s => s.isDead);
+  const sessionCode = useAppStore(s => s.sessionCode);
   
-  const isOnline = gameMode === 'online';
+  const onlineRole = useAppStore(s => s.onlineRole);
+  const isOnline = gameMode === 'party' || gameMode === 'global';
+
+  // Wire up pack callbacks
+  React.useEffect(() => {
+    PeerMesh.onPackInvite = (fromPeerId, fromPlayerName) => {
+      showPackInvite(fromPeerId, fromPlayerName);
+    };
+    PeerMesh.onPackJoinRequest = (fromPeerId, fromPlayerName) => {
+      showPackJoinRequest(fromPeerId, fromPlayerName);
+    };
+    PeerMesh.onPackKicked = () => {
+      showPackKicked();
+    };
+    PeerMesh.onPackMemberUpdate = (members) => {
+      showPackInfo(`Bando: ${members.length} membro(s)`);
+    };
+
+    return () => {
+      PeerMesh.onPackInvite = null;
+      PeerMesh.onPackJoinRequest = null;
+      PeerMesh.onPackKicked = null;
+      PeerMesh.onPackMemberUpdate = null;
+    };
+  }, []);
+
+  const handleLeaveGame = async () => {
+    if (gameMode === 'party' || gameMode === 'global') {
+      await PeerMesh.destroy();
+    }
+    if (onlineRole === 'host' || gameMode === 'online') {
+      peerSession.destroy();
+    }
+    setScreen('menu');
+  };
 
   const chunks = useMemo(() => {
     const centerX = playerChunkPos.x * 50;
@@ -146,7 +190,7 @@ export const GameScreen: React.FC = () => {
       <div className="absolute top-0 left-0 w-full p-4 z-10 flex justify-between items-start pointer-events-none">
         <div className="flex gap-2">
           <button
-            onClick={(e) => { e.stopPropagation(); setScreen('menu'); }}
+            onClick={(e) => { e.stopPropagation(); handleLeaveGame(); }}
             onPointerDown={(e) => e.stopPropagation()}
             className="pointer-events-auto flex items-center gap-2 bg-slate-900/60 hover:bg-slate-800/80 backdrop-blur text-white px-4 py-2 rounded-lg border border-slate-700 transition-all"
           >
@@ -164,19 +208,28 @@ export const GameScreen: React.FC = () => {
         </div>
 
         <div className="pointer-events-auto bg-slate-900/60 backdrop-blur text-white px-6 py-3 rounded-lg border border-slate-700 shadow-lg text-center flex flex-col items-center">
-          <div className="text-xs text-slate-400 uppercase tracking-wider mb-1">
+          <div className="text-lg text-slate-400 uppercase tracking-wider mb-1">
             {isOnline ? playerName : 'Single Player'}
           </div>
           <div className="font-bold text-orange-400 flex items-center gap-2">
             <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500 animate-pulse' : 'bg-slate-500'}`}></span>
             {selectedDinoId}
           </div>
+          {isOnline && (
+            <div className="text-lg mt-1 flex items-center justify-center gap-2 bg-slate-800/40 rounded-md px-2 py-0.5">
+              <span className="text-slate-300 font-medium">Sessão:</span>
+              <span className="font-mono text-orange-400 font-bold tracking-wider">{sessionCode}</span>
+              <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+            </div>
+          )}
         </div>
       </div>
 
-      {isDead && <DeathScreen />}
+      {isDead && <DeathScreen onLeave={handleLeaveGame} />}
 
       {!isDead && <PlayerHUD />}
+      <NetworkPanel />
+      <PackInviteToast />
       {!isDead && <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-1.5 h-1.5 bg-white/50 rounded-full z-10 pointer-events-none" />}
 
       <Canvas shadows={{ type: THREE.PCFShadowMap }}>
@@ -192,6 +245,7 @@ export const GameScreen: React.FC = () => {
         <Suspense fallback={null}>
           <NPCDinosaurs />
           <PlayerDinosaur />
+          {isOnline && <RemotePlayers />}
         </Suspense>
       </Canvas>
     </div>

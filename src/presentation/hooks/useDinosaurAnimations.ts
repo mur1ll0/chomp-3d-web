@@ -98,8 +98,10 @@ export function useDinosaurAnimations(gltf: AnimationSource, model: THREE.Object
     const newAction = getActionByIntent(intent);
     if (!newAction) return null;
 
-    if (activeAnimationRef.current) {
-      activeAnimationRef.current.fadeOut(0.2);
+    const hasPreviousAction = activeAnimationRef.current !== null;
+
+    if (hasPreviousAction) {
+      activeAnimationRef.current!.fadeOut(0.2);
     }
 
     if (loop) {
@@ -110,7 +112,13 @@ export function useDinosaurAnimations(gltf: AnimationSource, model: THREE.Object
       newAction.clampWhenFinished = true;
     }
 
-    newAction.reset().fadeIn(0.2).play();
+    // Primeira animação: sem fadeIn para não "arrastar" no spawn do NPC
+    // Animações subsequentes: cross-fade suave de 200ms
+    if (hasPreviousAction) {
+      newAction.reset().fadeIn(0.2).play();
+    } else {
+      newAction.reset().play();
+    }
     activeAnimationRef.current = newAction;
     currentActionRef.current = intentName;
     return newAction;

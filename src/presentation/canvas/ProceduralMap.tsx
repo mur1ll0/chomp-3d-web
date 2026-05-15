@@ -160,8 +160,12 @@ export const ProceduralMap: React.FC<ProceduralMapProps> = ({ chunks }) => {
   }, [allTrees, allRocks, allGrass, allWater, debugCollisions]);
 
   // Efeito de Visibilidade Noturna: Aumenta a emissão conforme o sol se põe
+  // Otimizado: só recalcula quando sunHeight muda significativamente (>0.01)
+  const lastSunHeight = useRef(999);
   useFrame(() => {
     const { sunHeight } = getWorldTime();
+    if (Math.abs(sunHeight - lastSunHeight.current) < 0.01) return;
+    lastSunHeight.current = sunHeight;
     
     // Curva de Transição Suave:
     // Começa a surgir quando o sol ainda está alto (0.7) e vai até o fundo da noite (-1.0)
@@ -170,7 +174,6 @@ export const ProceduralMap: React.FC<ProceduralMapProps> = ({ chunks }) => {
     if (sunHeight < 0.7) {
       // Mapeia o intervalo [0.7, -1.0] para [0.0, 1.0] linearmente
       const t = (0.7 - sunHeight) / 1.7;
-      // Removido o expoente para a subida ser mais constante e "aproveitar" melhor a janela de tempo
       glowIntensity = t * 0.4;
     }
 
@@ -179,15 +182,18 @@ export const ProceduralMap: React.FC<ProceduralMapProps> = ({ chunks }) => {
     materials.forEach(mat => {
       if (mat) {
         mat.emissiveIntensity = glowIntensity;
-        // Transição de cor suave proporcional à intensidade (máximo 0.4 -> lerp 1.0)
         const lerpFactor = Math.min(1, glowIntensity / 0.4);
         mat.emissive.lerpColors(_colorBlack, _colorNightBlue, lerpFactor);
       }
     });
 
-    // Garante que folhagens e gramas fiquem sem brilho
-    if (leavesMatRef.current) leavesMatRef.current.emissiveIntensity = 0;
-    if (grassMatRef.current) grassMatRef.current.emissiveIntensity = 0;
+    // Garante que folhagens e gramas fiquem sem brilho (apenas na primeira vez)
+    if (leavesMatRef.current && leavesMatRef.current.emissiveIntensity !== 0) {
+      leavesMatRef.current.emissiveIntensity = 0;
+    }
+    if (grassMatRef.current && grassMatRef.current.emissiveIntensity !== 0) {
+      grassMatRef.current.emissiveIntensity = 0;
+    }
   });
 
   return (

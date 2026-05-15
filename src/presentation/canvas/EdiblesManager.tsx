@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useEffect, useCallback } from 'react';
+import React, { useMemo, useRef, useEffect, useCallback, useState } from 'react';
 import * as THREE from 'three';
 import { useAppStore } from '../../store/useAppStore';
 import { Html } from '@react-three/drei';
@@ -25,14 +25,21 @@ const _zeroMatrix = new THREE.Matrix4().set(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0);
 export const EdiblesManager: React.FC<EdiblesManagerProps> = ({ chunks }) => {
   // Subscriptions leves do Zustand (selectors específicos)
   const interactableEdibleId = useAppStore(s => s.interactableEdibleId);
-  // Subscription ao edibleStates APENAS para atualizar o highlight do item interagível.
-  // Os instanced meshes são atualizados via subscribe() imperativo (sem re-render).
-  const edibleStates = useAppStore(s => s.edibleStates);
+  // edibleStates NÃO é inscrito via React para evitar re-renders desnecessários.
+  // As matrizes dos instanced meshes são atualizadas via subscribe() imperativo.
+  // O highlight do item interagível é atualizado via um estado local mínimo.
+  const [interactableData, setInteractableData] = useState<{
+    position: [number, number, number];
+    rotation: number;
+    scale: number;
+    type: 'Meat' | 'Plant';
+  } | null>(null);
 
   const plantMeshRef = useRef<THREE.InstancedMesh>(null);
   const meatMeshRef = useRef<THREE.InstancedMesh>(null);
   const plantsRef = useRef<MapEdible[]>([]);
   const meatsRef = useRef<MapEdible[]>([]);
+  const edibleStatesRef = useRef<Record<string, number>>({});
 
   // Lista de todos os edibles dos chunks visíveis
   const allEdibles = useMemo(() => chunks.flatMap(c => c.edibles), [chunks]);
@@ -53,6 +60,7 @@ export const EdiblesManager: React.FC<EdiblesManagerProps> = ({ chunks }) => {
   // Função imperativa para atualizar matrizes (SEM re-render React)
   const updateMeshes = useCallback(() => {
     const states = useAppStore.getState().edibleStates;
+    edibleStatesRef.current = states;
 
     if (plantMeshRef.current) {
       let count = 0;
@@ -102,14 +110,64 @@ export const EdiblesManager: React.FC<EdiblesManagerProps> = ({ chunks }) => {
   // Atualiza quando os chunks mudam
   useEffect(() => { updateMeshes(); }, [allEdibles, updateMeshes]);
 
+  // Função para atualizar highlight do interactable (definida antes do subscribe que a usa)
+  const computeInteractableData = useCallback((
+    id: string,
+    states: Record<string, number>,
+    map: Map<string, MapEdible>
+  ) => {
+    let edible = map.get(id);
+    
+    if (!edible && id.startsWith('npc_')) {
+      const npc = NPCManager.getNPC(id);
+      if (npc && npc.state === NPCState.Dead) {
+        const stats = DINOSAUR_ROSTER.find(d => d.id === npc.speciesId);
+        const scaleFactor = stats ? getNPCScaleFactor(npc.level, stats) : 0.5;
+        edible = {
+          id: npc.id,
+          type: 'Meat',
+          position: [npc.posX, npc.posY, npc.posZ] as [number, number, number],
+          rotation: npc.rotY,
+          scale: scaleFactor * 4.0
+        };
+      }
+    }
+
+    if (!edible) { setInteractableData(null); return; }
+    const remaining = states[edible.id] ?? 1.0;
+    if (remaining <= 0) { setInteractableData(null); return; }
+    const s = edible.scale * remaining;
+    setInteractableData({
+      position: edible.position as [number, number, number],
+      rotation: edible.rotation,
+      scale: s,
+      type: edible.type
+    });
+  }, []);
+
   // Escuta mudanças no edibleStates para atualizar instanced meshes imperativamente
+  // e atualizar o highlight do interagível apenas quando necessário
   useEffect(() => {
     return useAppStore.subscribe((state, prevState) => {
       if (state.edibleStates !== prevState.edibleStates) {
         updateMeshes();
+
+        // Atualiza highlight do interagível APENAS se o tamanho do item mudou
+        const interactableId = state.interactableEdibleId;
+        if (interactableId && prevState.edibleStates[interactableId] !== state.edibleStates[interactableId]) {
+          computeInteractableData(interactableId, state.edibleStates, ediblesMap);
+        }
+      }
+      // Reage à mudança de interactableEdibleId (quando o jogador se aproxima/afasta de comida)
+      if (state.interactableEdibleId !== prevState.interactableEdibleId) {
+        if (state.interactableEdibleId) {
+          computeInteractableData(state.interactableEdibleId, state.edibleStates, ediblesMap);
+        } else {
+          setInteractableData(null);
+        }
       }
     });
-  }, [updateMeshes]);
+  }, [updateMeshes, ediblesMap, computeInteractableData]);
 
   // Lógica de Crescimento Gradual (Regrow) - 1x por segundo
   useEffect(() => {
@@ -118,41 +176,6 @@ export const EdiblesManager: React.FC<EdiblesManagerProps> = ({ chunks }) => {
     }, 1000);
     return () => clearInterval(interval);
   }, []);
-
-  // Highlight do edible interagível — depende de edibleStates para acompanhar o tamanho
-  const interactableData = useMemo(() => {
-    if (!interactableEdibleId) return null;
-    
-    let edible = ediblesMap.get(interactableEdibleId);
-    
-    // Se não for um edible estático, verifica se é um NPC morto
-    if (!edible && interactableEdibleId.startsWith('npc_')) {
-      const npc = NPCManager.getNPC(interactableEdibleId);
-      if (npc && npc.state === NPCState.Dead) {
-        const stats = DINOSAUR_ROSTER.find(d => d.id === npc.speciesId);
-        const scaleFactor = stats ? getNPCScaleFactor(npc.level, stats) : 0.5;
-        const npcEdible: MapEdible = {
-          id: npc.id,
-          type: 'Meat',
-          position: [npc.posX, npc.posY, npc.posZ] as [number, number, number],
-          rotation: npc.rotY,
-          scale: scaleFactor * 4.0 // Usando multiplicador 4.0 para durar mais
-        };
-        edible = npcEdible;
-      }
-    }
-
-    if (!edible) return null;
-    const remaining = edibleStates[edible.id] ?? 1.0;
-    if (remaining <= 0) return null;
-    const s = edible.scale * remaining;
-    return {
-      position: edible.position as [number, number, number],
-      rotation: edible.rotation,
-      scale: s,
-      type: edible.type
-    };
-  }, [interactableEdibleId, ediblesMap, edibleStates]);
 
   return (
     <group>
@@ -200,8 +223,8 @@ export const EdiblesManager: React.FC<EdiblesManagerProps> = ({ chunks }) => {
             </mesh>
           )}
           
-          <Html position={[0, 1.5, 0]} center zIndexRange={[100, 0]}>
-            <div className="bg-slate-900/90 text-white px-3 py-1 rounded-lg font-bold text-sm pointer-events-none animate-bounce border border-orange-500 shadow-xl shadow-orange-500/20 whitespace-nowrap">
+          <Html position={[0, Math.max(0.6, interactableData.scale * 1.2), 0]} center zIndexRange={[100, 0]}>
+            <div className="bg-slate-900/90 text-white px-2 py-0.5 rounded-lg font-bold text-xs pointer-events-none animate-bounce border border-orange-500 shadow-xl shadow-orange-500/20 whitespace-nowrap">
               Comer [E]
             </div>
           </Html>

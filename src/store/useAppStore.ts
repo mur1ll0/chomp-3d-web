@@ -1,7 +1,10 @@
 import { create } from 'zustand';
+import type { PackMemberEntry } from '../infrastructure/network/messages';
 
-export type Screen = 'menu' | 'character-select' | 'settings' | 'game';
-export type GameMode = 'online' | 'offline' | null;
+export type Screen = 'menu' | 'character-select' | 'settings' | 'game' | 'session-select';
+export type GameMode = 'single' | 'party' | 'global' | 'online' | 'offline' | null;
+export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
+export type OnlineRole = 'host' | 'client' | null;
 
 export type ControlAction =
   | 'moveForward'
@@ -100,6 +103,21 @@ interface AppState {
   foodEaten: number; // total units of food eaten
   debugZoomUnlocked: boolean;
 
+  // Pack State
+  packRole: 'solo' | 'leading' | 'member';
+  packMembers: PackMemberEntry[];
+  packLeaderPeerId: string | null;
+
+  // Multiplayer State
+  sessionCode: string;
+  packCode: string;
+  connectionStatus: ConnectionStatus;
+  onlineRole: OnlineRole;
+  connectedPlayers: string[];
+  networkNPCs: unknown[];
+  networkPlayers: unknown[];
+  networkTick: number;
+
   // Actions
   setScreen: (screen: Screen) => void;
   setGameMode: (mode: GameMode) => void;
@@ -130,6 +148,16 @@ interface AppState {
   resetGameStats: () => void;
   setLevel: (level: number) => void;
   setDebugZoomUnlocked: (v: boolean) => void;
+  setSessionCode: (code: string) => void;
+  setConnectionStatus: (status: ConnectionStatus) => void;
+  setOnlineRole: (role: OnlineRole) => void;
+  setConnectedPlayers: (players: string[]) => void;
+  setNetworkData: (npcs: unknown[], players: unknown[], tick: number, edibleStates?: Record<string, number>) => void;
+
+  setPackCode: (code: string) => void;
+  setPackRole: (role: 'solo' | 'leading' | 'member') => void;
+  setPackMembers: (members: PackMemberEntry[]) => void;
+  setPackLeaderPeerId: (peerId: string | null) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -166,6 +194,21 @@ export const useAppStore = create<AppState>((set) => ({
   timeAlive: 0,
   foodEaten: 0,
   debugZoomUnlocked: false,
+
+  // Pack
+  packRole: 'solo',
+  packMembers: [],
+  packLeaderPeerId: null,
+
+  // Multiplayer
+  sessionCode: '',
+  packCode: '',
+  connectionStatus: 'disconnected',
+  onlineRole: null,
+  connectedPlayers: [],
+  networkNPCs: [],
+  networkPlayers: [],
+  networkTick: 0,
 
   setScreen: (screen) => set({ currentScreen: screen }),
   setGameMode: (mode) => set({ gameMode: mode }),
@@ -388,5 +431,28 @@ export const useAppStore = create<AppState>((set) => ({
     edibleStates: {}, edibleGrowthLocks: {}, interactableEdibleId: null
   }),
   setLevel: (level) => set({ level: Math.max(1, level) }),
-  setDebugZoomUnlocked: (v) => set({ debugZoomUnlocked: v })
+  setDebugZoomUnlocked: (v) => set({ debugZoomUnlocked: v }),
+  setSessionCode: (code) => set({ sessionCode: code }),
+  setPackCode: (code) => set({ packCode: code }),
+  setConnectionStatus: (status) => set({ connectionStatus: status }),
+  setOnlineRole: (role) => set({ onlineRole: role }),
+  setConnectedPlayers: (players) => set({ connectedPlayers: players }),
+  setPackRole: (role) => set({ packRole: role }),
+  setPackMembers: (members) => set({ packMembers: members }),
+  setPackLeaderPeerId: (peerId) => set({ packLeaderPeerId: peerId }),
+  setNetworkData: (npcs, players, tick, edibleStates) => set((state) => {
+    const update: Partial<AppState> = { networkNPCs: npcs, networkPlayers: players, networkTick: tick };
+    if (edibleStates) {
+      // Merge edible states from host — client doesn't have authority to override local
+      // ones, but needs to reflect what host sees for visual sync.
+      update.edibleStates = { ...state.edibleStates, ...edibleStates };
+      // Also respawn timers: if host says something is gone, mark it
+      for (const id in edibleStates) {
+        if (edibleStates[id] <= 0) {
+          update.edibleStates = { ...update.edibleStates!, [id]: 0 };
+        }
+      }
+    }
+    return update;
+  }),
 }));

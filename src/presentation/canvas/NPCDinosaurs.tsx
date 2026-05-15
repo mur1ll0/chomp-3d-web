@@ -16,10 +16,16 @@ import { MapWorldQueryGateway } from '../../infrastructure/adapters/MapWorldQuer
 import { WORLD_SEED } from '../../infrastructure/generation/MapGenerator';
 import { getNpcPerceptionProfile } from '../../useCases/game/systems/NPCPerceptionUtils';
 import { cloneSkinnedMesh } from '../utils/ThreeUtils';
+import { peerSession } from '../../infrastructure/network/PeerSession';
+import { NpcSnapshotInterpolator } from '../../useCases/game/network/NpcSnapshotInterpolator';
 
 // Singletons reutilizáveis para evitar alocações no loop de render
 const _tempPos = new THREE.Vector3();
 const _tempScale = new THREE.Vector3();
+
+// Lookup O(1) para stats de dinossauros — evita Array.find() em hot path
+const dinoStatsMap: Record<string, import('../../domain/models/DinosaurStats').DinosaurStats> = {};
+for (const d of DINOSAUR_ROSTER) dinoStatsMap[d.id] = d;
 
 /**
  * Instância individual de um NPC.
@@ -71,8 +77,14 @@ const NPCInstance: React.FC<{
     return { clonedScene: clone, cachedMaterials: mats };
   }, [gltf.scene]);
 
-  const { playAnimation } = useDinosaurAnimations(gltf, clonedScene);
+  const { names, playAnimation } = useDinosaurAnimations(gltf, clonedScene);
   const lastColorState = useRef<'normal' | 'hit' | 'dead'>('normal');
+
+  useEffect(() => {
+    if (names && names.length > 0) {
+      playAnimation('Idle');
+    }
+  }, [names, playAnimation]);
 
   useFrame((_, delta) => {
     if (!groupRef.current) return;
@@ -192,14 +204,20 @@ export const NPCDinosaurs: React.FC = () => {
   const debugCollisions = useAppStore(s => s.debugCollisions);
   const debugNpcLevels = useAppStore(s => s.debugNpcLevels);
   const debugNpcVision = useAppStore(s => s.debugNpcVision);
+  const onlineRole = useAppStore(s => s.onlineRole);
+  const networkNPCs = useAppStore(s => s.networkNPCs) as import('../../domain/models/NPCDinosaur').NPCData[];
   const [renderList, setRenderList] = React.useState<NPCData[]>([]);
   const updateCounter = useRef(0);
   const simulationAccumulator = useRef(0);
   const gameStateGateway = useMemo(() => new ZustandGameStateGateway(), []);
   const worldQueryGateway = useMemo(() => new MapWorldQueryGateway(), []);
+  const lastNetworkNPCs = useRef<NPCData[]>([]);
 
   const FIXED_TIMESTEP = 1 / 30;
-  const MAX_SUBSTEPS = 5;
+  const MAX_SUBSTEPS = 3;
+
+  const isClient = onlineRole === 'client';
+  const interpolatorRef = useRef<NpcSnapshotInterpolator | null>(null);
 
   const debugGeo = useMemo(() => new THREE.CylinderGeometry(1, 1, 1, 8), []);
   const debugMat = useMemo(() => new THREE.MeshBasicMaterial({ color: 'red', wireframe: true, transparent: true, opacity: 0.3 }), []);
@@ -213,12 +231,92 @@ export const NPCDinosaurs: React.FC = () => {
   useLayoutEffect(() => {
     NPCManager.configureGateways(gameStateGateway, worldQueryGateway);
     NPCManager.configureWorldSeed(WORLD_SEED);
-    NPCManager.reset();
-    return () => NPCManager.reset();
-  }, [gameStateGateway, worldQueryGateway]);
+
+    if (isClient) {
+      interpolatorRef.current = new NpcSnapshotInterpolator();
+      NPCManager.setAuthority(false);
+      NPCManager.reset();
+    } else {
+      NPCManager.setAuthority(true);
+      NPCManager.reset();
+    }
+
+    return () => {
+      NPCManager.reset();
+      interpolatorRef.current = null;
+    };
+  }, [gameStateGateway, worldQueryGateway, isClient]);
+
+  // Client: quando networkNPCs muda no store, alimenta o interpolador
+  React.useEffect(() => {
+    if (!isClient || networkNPCs.length === 0) return;
+    if (lastNetworkNPCs.current === networkNPCs) return;
+    lastNetworkNPCs.current = networkNPCs;
+    interpolatorRef.current?.pushSnapshot(networkNPCs);
+  }, [isClient, networkNPCs]);
+
+  // Host Migration: se o host desconectar, este cliente assume como novo host
+  // Usa event-driven via PeerSession — sem polling
+  React.useEffect(() => {
+    if (!isClient) return;
+
+    const onTransfer = (newHostClientId: string) => {
+      console.log(`Host transferindo para: ${newHostClientId}`);
+      NPCManager.setAuthority(true);
+    };
+
+    peerSession.setOnHostTransferRequested(onTransfer);
+
+    return () => {
+      peerSession.setOnHostTransferRequested(null!);
+    };
+  }, [isClient]);
 
   useFrame((_, delta) => {
     const pp = PlayerPositionRef;
+
+    if (isClient) {
+      // Client: interpola NPCs dos snapshots do host apenas durante interpolação ativa
+      // Quando estável (sem novo snapshot), evita alocações e diffing desnecessários
+      const interp = interpolatorRef.current;
+      const interpolated = interp?.update(delta);
+      if (interpolated && interpolated.length > 0 && (interp?.isActive() ?? false)) {
+        NPCManager.setNPCsFromNetwork(interpolated);
+      }
+
+      updateCounter.current++;
+      if (updateCounter.current >= 15) {
+        updateCounter.current = 0;
+        setRenderList(NPCManager.getActiveNPCs());
+      }
+      return;
+    }
+
+    // Cliente remoto já retornou acima. Aqui só chegam host (onlineRole === 'host')
+    // e single player (onlineRole === null). Ambos simulam NPCs localmente.
+
+    // Host: alimenta remotePlayers com estados dos clientes conectados
+    if (onlineRole === 'host') {
+      const hostPlayerStates = peerSession.getHostPlayerStates();
+      const remotePlayers = hostPlayerStates.map(p => {
+        const pStats = dinoStatsMap[p.dinoId];
+        const defaultStats = DINOSAUR_ROSTER[0];
+        return {
+          id: p.id,
+          posX: p.posX,
+          posZ: p.posZ,
+          level: p.level,
+          diet: (pStats?.diet ?? 'Carnivore') as import('../../domain/models/DinosaurStats').Diet,
+          scale: getNPCScaleFactor(p.level, pStats ?? defaultStats),
+          strength: pStats?.strength ?? 5,
+          collisionRadius: pStats?.collisionRadius ?? 2,
+          interactRadius: pStats?.interactRadius ?? 3,
+        };
+      });
+      NPCManager.setRemotePlayers(remotePlayers);
+    }
+
+    // Simulação autoritativa (host + single player)
     simulationAccumulator.current = Math.min(simulationAccumulator.current + delta, FIXED_TIMESTEP * MAX_SUBSTEPS);
 
     let substeps = 0;
@@ -231,6 +329,61 @@ export const NPCDinosaurs: React.FC = () => {
     const dmg = NPCManager.consumePlayerDamage();
     if (!pp.isDead && dmg > 0) {
       useAppStore.getState().takeDamage(dmg);
+    }
+
+    // Host-only: processa inputs de clientes e broadcast de snapshots
+    if (onlineRole === 'host') {
+      const hostState = useAppStore.getState();
+
+      const allClients = peerSession.getHostClients();
+      for (const client of allClients) {
+        const input = peerSession.peekRemoteInput(client.id);
+        if (!input) continue;
+        const clientStats = dinoStatsMap[client.dinoId];
+        if (!clientStats) continue;
+        const clientScale = getNPCScaleFactor(input.level, clientStats);
+        const interactRadius = calculateInteractRadius(clientStats.interactRadius, clientScale);
+
+        if (input.attacking) {
+          NPCManager.processClientAttack(input.posX, input.posZ, input.level, clientStats.strength, interactRadius, client.id);
+        }
+        if (input.eating && input.eatingTargetId) {
+          NPCManager.processClientEat(input.eatingTargetId, input.level, clientStats.strength, input.posX, input.posZ);
+        }
+      }
+
+      const allNPCs = NPCManager.getActiveNPCs();
+
+      const hostPlayerStates = peerSession.getHostPlayerStates();
+      const hostPlayer: import('../../infrastructure/network/messages').PlayerStateSnapshot = {
+        id: 'host',
+        name: hostState.playerName,
+        dinoId: hostState.selectedDinoId,
+        dinoColors: hostState.dinoColors,
+        posX: pp.x, posY: pp.y, posZ: pp.z,
+        rotY: pp.rotY,
+        level: pp.level,
+        health: hostState.health,
+        maxHealth: hostState.maxHealth,
+        isDead: pp.isDead,
+        animationIntent: pp.animationIntent,
+      };
+
+      const clientPlayers = hostPlayerStates.map(p => {
+        if (NPCManager.hasPendingRemoteDamage(p.id)) {
+          const damage = NPCManager.consumeRemoteDamage(p.id);
+          return { ...p, health: Math.max(0, p.health - damage) };
+        }
+        return p;
+      });
+      const allPlayers = [hostPlayer, ...clientPlayers];
+
+      peerSession.broadcastSnapshot(
+        NPCManager.getSimulationTick(),
+        allNPCs,
+        allPlayers,
+        hostState.edibleStates
+      );
     }
 
     updateCounter.current++;
@@ -260,3 +413,5 @@ export const NPCDinosaurs: React.FC = () => {
     </group>
   );
 };
+
+

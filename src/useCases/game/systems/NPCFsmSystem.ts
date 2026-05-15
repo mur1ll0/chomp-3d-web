@@ -11,6 +11,8 @@ import type { IRandomProvider } from '../../../domain/interfaces/IRandomProvider
 import { getNpcPerceptionProfile, isLineOfSightBlocked, isTargetInsideFov } from './NPCPerceptionUtils';
 import { PlayerPositionRef } from '../PlayerPositionRef';
 
+const CHUNK_SIZE = 50;
+
 export class NPCFsmSystem {
   private carnivoreRetaliationDistance = 28;
   private herbivorePackDefenseDistance = 60;
@@ -36,6 +38,7 @@ export class NPCFsmSystem {
     random: IRandomProvider;
     npcsById: Map<string, NPCData>;
     gameState: IGameStateGateway;
+    peerPresenceInChunk?: Map<string, Set<string>>;
   }): void {
     const {
       npc,
@@ -52,7 +55,16 @@ export class NPCFsmSystem {
       random,
       npcsById,
       gameState,
+      peerPresenceInChunk = new Map(),
     } = args;
+
+    const npcChunkX = Math.floor(npc.posX / CHUNK_SIZE);
+    const npcChunkZ = Math.floor(npc.posZ / CHUNK_SIZE);
+
+    // Chunk-based player presence detection (modo determinístico / P2P).
+    // Verifica se há players no chunk do NPC ou em chunks adjacentes.
+    const playersInMyChunk = peerPresenceInChunk.get(`${npcChunkX},${npcChunkZ}`) ?? new Set();
+    const hasPlayerInChunk = playersInMyChunk.size > 0;
 
     const playerIsDead = PlayerPositionRef.isDead;
 
@@ -92,20 +104,23 @@ export class NPCFsmSystem {
     }
     const visibleNpcs = this.visibleNpcsBuffer;
 
-    const playerVisible = isTargetInsideFov(
-      npc,
-      playerPos.x,
-      playerPos.z,
-      perceptionProfile.halfFovRad,
-      perceptionProfile.viewDistance
-    ) && !isLineOfSightBlocked(
-      npc.posX,
-      npcEyeY,
-      npc.posZ,
-      playerPos.x,
-      PlayerPositionRef.y + PlayerPositionRef.collisionHeight * 0.42 * PlayerPositionRef.scale,
-      playerPos.z,
-      obstacles
+    // Player visibility: normal FOV check OR chunk-based presence (deterministic mode)
+    const playerVisible = hasPlayerInChunk || (
+      isTargetInsideFov(
+        npc,
+        playerPos.x,
+        playerPos.z,
+        perceptionProfile.halfFovRad,
+        perceptionProfile.viewDistance
+      ) && !isLineOfSightBlocked(
+        npc.posX,
+        npcEyeY,
+        npc.posZ,
+        playerPos.x,
+        PlayerPositionRef.y + PlayerPositionRef.collisionHeight * 0.42 * PlayerPositionRef.scale,
+        playerPos.z,
+        obstacles
+      )
     );
 
     this.visibleEdiblesBuffer.length = 0;

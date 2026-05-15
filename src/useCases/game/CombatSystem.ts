@@ -1,9 +1,14 @@
 import { calculateDamage, getNPCScaleFactor } from '../../domain/models/NPCDinosaur';
 import type { NPCData } from '../../domain/models/NPCDinosaur';
-import { DINOSAUR_ROSTER } from '../../domain/models/DinosaurStats';
+import { DINOSAUR_ROSTER, type DinosaurStats } from '../../domain/models/DinosaurStats';
 import { NPCState } from '../../domain/models/NPCState';
+
+// Lookup O(1) — evita Array.find() no hot path do combate
+const dinoStatsMap: Record<string, DinosaurStats> = {};
+for (const d of DINOSAUR_ROSTER) dinoStatsMap[d.id] = d;
 import { PlayerPositionRef } from './PlayerPositionRef';
 import { calculateInteractRadius, isInInteractionRange } from '../../domain/services/DinosaurService';
+import { EventBus } from '../../infrastructure/network/EventBus';
 
 /**
  * Sistema de Combate puro — sem dependência de React ou Three.js.
@@ -45,12 +50,12 @@ export function npcAttackNPC(
   if (attacker.attackCooldown > 0) return null;
   if (target.state === NPCState.Dead) return null;
 
-  const attackerStats = DINOSAUR_ROSTER.find(d => d.id === attacker.speciesId);
+  const attackerStats = dinoStatsMap[attacker.speciesId];
   if (!attackerStats) return null;
 
   // Verifica colisão (bounding spheres) usando raio de interação
   const attackerScale = getNPCScaleFactor(attacker.level, attackerStats);
-  const targetStats = DINOSAUR_ROSTER.find(d => d.id === target.speciesId);
+  const targetStats = dinoStatsMap[target.speciesId];
   if (!targetStats) return null;
   const targetScale = getNPCScaleFactor(target.level, targetStats);
 
@@ -102,7 +107,7 @@ export function npcAttackPlayer(
   if (attacker.state === NPCState.Dead) return 0;
   if (PlayerPositionRef.isDead) return 0;
 
-  const attackerStats = DINOSAUR_ROSTER.find(d => d.id === attacker.speciesId);
+  const attackerStats = dinoStatsMap[attacker.speciesId];
   if (!attackerStats) return 0;
 
   const attackerScale = getNPCScaleFactor(attacker.level, attackerStats);
@@ -140,7 +145,7 @@ export function playerAttackNPC(
 ): CombatEvent | null {
   if (target.state === NPCState.Dead) return null;
 
-  const targetStats = DINOSAUR_ROSTER.find(d => d.id === target.speciesId);
+  const targetStats = dinoStatsMap[target.speciesId];
   if (!targetStats) return null;
   const targetScale = getNPCScaleFactor(target.level, targetStats);
 
@@ -189,6 +194,46 @@ export function playerAttackNPC(
     targetHealth: target.health,
     targetDied: died,
   };
+}
+
+/**
+ * Versão do ataque do jogador que gera eventos via EventBus.
+ * Usado em modo Party/Global para sincronizar o ataque com peers remotos.
+ * Aplica o dano localmente E dispara o evento para replicação.
+ */
+export function playerAttackNPCWithEvent(
+  playerPosX: number,
+  playerPosZ: number,
+  playerScale: number,
+  playerStrength: number,
+  playerLevel: number,
+  target: NPCData,
+  tick: number
+): CombatEvent | null {
+  const result = playerAttackNPC(playerPosX, playerPosZ, playerScale, playerStrength, playerLevel, target);
+  if (result) {
+    EventBus.push({
+      type: 'npc_attack',
+      tick,
+      originPeerId: 'local',
+      data: {
+        npcId: target.id,
+        damage: result.damage,
+        attackerPosX: playerPosX,
+        attackerPosZ: playerPosZ,
+      },
+    });
+
+    if (result.targetDied) {
+      EventBus.push({
+        type: 'npc_died',
+        tick,
+        originPeerId: 'local',
+        data: { npcId: target.id },
+      });
+    }
+  }
+  return result;
 }
 
 /**

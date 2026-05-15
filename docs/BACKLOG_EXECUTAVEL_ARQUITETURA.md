@@ -286,7 +286,7 @@ Status:
 
 ## E5 - Fundacao de multiplayer PeerJS (apos E1-E3)
 
-### E5.1 Camada de rede host/client
+### E5.1 Camada de rede host/client [OK]
 Criar:
 - [src/infrastructure/network/PeerSession.ts](../src/infrastructure/network/PeerSession.ts)
 - [src/infrastructure/network/PeerHost.ts](../src/infrastructure/network/PeerHost.ts)
@@ -298,38 +298,51 @@ Alterar:
 - [src/presentation/screens/MainMenu.tsx](../src/presentation/screens/MainMenu.tsx)
 - [src/presentation/screens/CharacterSelectionMenu.tsx](../src/presentation/screens/CharacterSelectionMenu.tsx)
 - [src/presentation/screens/GameScreen.tsx](../src/presentation/screens/GameScreen.tsx)
+- [src/presentation/screens/SessionSelectScreen.tsx](../src/presentation/screens/SessionSelectScreen.tsx) (nova tela)
+- [src/App.tsx](../src/App.tsx)
 
 Alterar detalhes:
-- Fluxo real de criar/entrar sessao.
-- Estado de conexao e erros de rede.
-- Troca de mensagens padronizadas (snapshot, input, join/leave, ping).
+- Nova tela `SessionSelectScreen` para escolha entre criar sala (host) ou entrar com código.
+- Host cria PeerJS peer com código de 4 caracteres, client conecta via mesmo código.
+- Mensagens padronizadas: join/join_ack, input, snapshot, player_joined/left.
+- Estado de conexão e código de sessão na store (useAppStore).
+- HUD do host exibe código da sala para compartilhar.
 
 Criterio de aceite:
 - 2 jogadores conectam por codigo de sessao e enxergam estado sincronizado.
 
-### E5.2 Autoridade do host e interpolacao no client
+Status:
+- [OK] Implementado em 2026-05-13 com PeerHost/PeerClient/PeerSession, mensagens tipadas, fluxo de UI criar/entrar sala.
+
+### E5.2 Autoridade do host e interpolacao no client [OK]
 Arquivos:
 - [src/useCases/game/NPCManager.ts](../src/useCases/game/NPCManager.ts)
 - [src/presentation/canvas/NPCDinosaurs.tsx](../src/presentation/canvas/NPCDinosaurs.tsx)
 
 Criar:
 - [src/useCases/game/network/NpcSnapshotInterpolator.ts](../src/useCases/game/network/NpcSnapshotInterpolator.ts)
+- [src/presentation/canvas/RemotePlayers.tsx](../src/presentation/canvas/RemotePlayers.tsx)
 
 Alterar:
-- Host: roda update de IA/combate e publica snapshots.
-- Client: nao executa update autoritativo de NPC, apenas aplica snapshots interpolados.
+- Host: roda update de IA/combate e publica snapshots a cada 3 ticks.
+- Client: nao executa update autoritativo de NPC — recebe snapshots do host, interpola via NpcSnapshotInterpolator.
+- NPCManager.setAuthority(false) desliga simulação no client.
+- RemotePlayers renderiza outros jogadores conectados (nome + modelo 3D).
 
 Criterio de aceite:
 - Sem "teleporte" evidente em NPCs sob jitter moderado.
 - Estado final converge para o do host.
 
+Status:
+- [OK] Implementado em 2026-05-13 com NpcSnapshotInterpolator para interpolação suave de NPCs e RemotePlayers para exibir outros jogadores.
+
 ## Ordem de execucao sugerida por sprint
-- Sprint 1: E0 completo.
-- Sprint 2: E1.1 + E1.2.
-- Sprint 3: E2.1 + E2.2.
-- Sprint 4: E3.1 + E3.2.
-- Sprint 5: E4 completo.
-- Sprint 6: E5.1 + E5.2.
+- Sprint 1: E0 completo. [OK]
+- Sprint 2: E1.1 + E1.2. [OK]
+- Sprint 3: E2.1 + E2.2. [OK]
+- Sprint 4: E3.1 + E3.2. [OK]
+- Sprint 5: E4 completo. [OK]
+- Sprint 6: E5.1 + E5.2. [OK]
 
 ## Checklist de validacao por etapa
 - Lint: npm run lint
