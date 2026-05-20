@@ -1,7 +1,9 @@
 import Peer from 'peerjs';
 import type { DataConnection } from 'peerjs';
 import { EventBus, type GameEvent } from './EventBus';
+import { EventReplicator } from './EventReplicator';
 import { ChunkInterestManager, worldToChunk } from './ChunkInterestManager';
+import { PlayerPositionRef } from '../../useCases/game/PlayerPositionRef';
 import type {
   PeerHandshakeMessage,
   PeerHandshakeAckMessage,
@@ -31,6 +33,9 @@ export interface PeerInfo {
   playerName: string;
   dinoId: string;
   colors: Record<string, string>;
+  packCode: string;
+  posX: number;
+  posZ: number;
   chunkX: number;
   chunkZ: number;
   connectedAt: number;
@@ -68,6 +73,7 @@ class PeerMeshClass {
   private _playerName = '';
   private _dinoId = '';
   private _colors: Record<string, string> = {};
+  private _packCode = '';
   private _lastPlayerStateSend = 0;
   private _onPeerListChanged: ((peers: PeerInfo[]) => void) | null = null;
   private _isFirstPeer = false;
@@ -136,6 +142,7 @@ class PeerMeshClass {
   }
 
   async destroy(): Promise<void> {
+    EventReplicator.disable();
     this._stopHeartbeat();
     EventBus.clear();
 
@@ -172,6 +179,10 @@ class PeerMeshClass {
     this._colors = colors;
   }
 
+  setPackCode(packCode: string): void {
+    this._packCode = packCode;
+  }
+
   setOnPeerListChanged(cb: ((peers: PeerInfo[]) => void) | null): void {
     this._onPeerListChanged = cb;
   }
@@ -184,6 +195,14 @@ class PeerMeshClass {
 
   getSessionCode(): string {
     return this._sessionCode;
+  }
+
+  getPackCode(): string {
+    return this._packCode;
+  }
+
+  isFirstPeer(): boolean {
+    return this._isFirstPeer;
   }
 
   getMode(): MeshMode {
@@ -212,6 +231,18 @@ class PeerMeshClass {
     return this._remotePlayerStates;
   }
 
+  getPackLeaderPosition(): { x: number; z: number } | null {
+    if (this._packMembers.length === 0) return null;
+    // O primeiro membro do pack é sempre o líder
+    const leader = this._packMembers[0];
+    if (leader.peerId === this._ownPeerId) return null;
+    const state = this._remotePlayerStates.get(leader.peerId);
+    if (state) return { x: state.posX, z: state.posZ };
+    const info = this._peerInfo.get(leader.peerId);
+    if (info) return { x: info.posX, z: info.posZ };
+    return null;
+  }
+
   // ── Envio de mensagens ──
 
   broadcastEvent(event: GameEvent): void {
@@ -235,14 +266,23 @@ class PeerMeshClass {
     this._broadcast(msg);
   }
 
+  broadcastNpcSnapshot(tick: number, npcs: any[], players: any[]): void {
+    const msg: any = { type: 'npc_snapshot', tick, npcs, players };
+    this._broadcast(msg);
+  }
+
   // ── Pack API ──
 
   createPack(): void {
+    if (!this._packCode) {
+      this._packCode = generateSessionCode();
+    }
     this._packMembers = [{ peerId: this._ownPeerId, playerName: this._playerName, dinoId: this._dinoId }];
     this._isPackLeader = true;
     useAppStore.getState().setPackRole('leading');
     useAppStore.getState().setPackMembers(this._packMembers);
     useAppStore.getState().setPackLeaderPeerId(this._ownPeerId);
+    useAppStore.getState().setPackCode(this._packCode);
   }
 
   inviteToPack(peerId: string): void {
@@ -271,6 +311,7 @@ class PeerMeshClass {
       fromPlayerName: this._playerName,
       fromDinoId: this._dinoId,
     };
+    useAppStore.getState().setPackLeaderPeerId(leaderPeerId);
     this._sendToPeer(leaderPeerId, msg);
   }
 
@@ -323,7 +364,7 @@ class PeerMeshClass {
       playerName: info.playerName,
       dinoId: info.dinoId,
     });
-    useAppStore.getState().setPackMembers(this._packMembers);
+    useAppStore.getState().setPackMembers([...this._packMembers]);
     this._broadcastPackUpdate();
   }
 
@@ -338,7 +379,11 @@ class PeerMeshClass {
       type: 'pack_member_update',
       members: this._packMembers,
     };
-    this._broadcast(msg);
+    for (const member of this._packMembers) {
+      if (member.peerId !== this._ownPeerId) {
+        this._sendToPeer(member.peerId, msg);
+      }
+    }
     this.onPackMemberUpdate?.(this._packMembers);
   }
 
@@ -389,21 +434,26 @@ class PeerMeshClass {
         reject(new Error('Connection to host timed out'));
       }, 10000);
 
+      conn.on('data', (raw) => {
+        this._handleMessage(conn.peer, raw as PeerMeshMessage);
+      });
+
       conn.on('open', () => {
         clearTimeout(timeout);
         this._connections.set(conn.peer, conn);
         this._lastPeerHeartbeat.set(conn.peer, Date.now());
-
-        // Envia handshake
-        const chunk = worldToChunk(0, 0);
+        const localChunk = this._getCurrentChunk();
         const handshake: PeerHandshakeMessage = {
           type: 'peer_handshake',
           peerId: this._ownPeerId,
           playerName: this._playerName,
           dinoId: this._dinoId,
           colors: this._colors,
-          chunkX: chunk.x,
-          chunkZ: chunk.z,
+          packCode: this._packCode,
+          posX: PlayerPositionRef.x,
+          posZ: PlayerPositionRef.z,
+          chunkX: localChunk.x,
+          chunkZ: localChunk.z,
           tick: 0,
         };
         this._sendToPeer(conn.peer, handshake);
@@ -415,6 +465,15 @@ class PeerMeshClass {
         reject(err);
       });
     });
+  }
+
+  private _getCurrentChunk(): { x: number; z: number } {
+    const px = PlayerPositionRef.x;
+    const pz = PlayerPositionRef.z;
+    if (px !== 0 || pz !== 0) {
+      return worldToChunk(px, pz);
+    }
+    return this._chunkInterest?.playerChunk ?? worldToChunk(0, 0);
   }
 
   private _setupConnection(conn: DataConnection): void {
@@ -435,15 +494,18 @@ class PeerMeshClass {
 
     // Se for o primeiro peer e recebeu conexão de entrada: envia handshake de volta
     if (this._isFirstPeer) {
-      const chunk = worldToChunk(0, 0);
+      const localChunk = this._getCurrentChunk();
       const ack: PeerHandshakeAckMessage = {
         type: 'peer_handshake_ack',
         peerId: this._ownPeerId,
         playerName: this._playerName,
         dinoId: this._dinoId,
         colors: this._colors,
-        chunkX: chunk.x,
-        chunkZ: chunk.z,
+        packCode: this._packCode,
+        posX: PlayerPositionRef.x,
+        posZ: PlayerPositionRef.z,
+        chunkX: localChunk.x,
+        chunkZ: localChunk.z,
         tick: 0,
       };
       this._sendToPeer(conn.peer, ack);
@@ -497,7 +559,19 @@ class PeerMeshClass {
       case 'pack_leave':
         this._handlePackLeave(msg);
         break;
+      case 'npc_snapshot':
+        this._handleNpcSnapshot(msg as any);
+        break;
     }
+  }
+
+  private _handleNpcSnapshot(msg: { tick: number; npcs: any[]; players: any[] }): void {
+    useAppStore.getState().setNetworkData(
+      msg.npcs,
+      msg.players,
+      msg.tick,
+      {}
+    );
   }
 
   private _handleHandshake(peerId: string, msg: PeerHandshakeMessage): void {
@@ -509,23 +583,30 @@ class PeerMeshClass {
         playerName: msg.playerName,
         dinoId: msg.dinoId,
         colors: msg.colors,
+        packCode: msg.packCode,
+        posX: msg.posX,
+        posZ: msg.posZ,
         chunkX: msg.chunkX,
         chunkZ: msg.chunkZ,
         connectedAt: Date.now(),
       });
       this._notifyPeerListChanged();
+      this._autoJoinByPackCode(peerId, msg.packCode);
 
       // Primeiro peer: ao receber handshake, envia ack + peer list
       if (this._isFirstPeer) {
-        const chunk = worldToChunk(0, 0);
+        const localChunk = this._getCurrentChunk();
         const ack: PeerHandshakeAckMessage = {
           type: 'peer_handshake_ack',
           peerId: this._ownPeerId,
           playerName: this._playerName,
           dinoId: this._dinoId,
           colors: this._colors,
-          chunkX: chunk.x,
-          chunkZ: chunk.z,
+          packCode: this._packCode,
+          posX: PlayerPositionRef.x,
+          posZ: PlayerPositionRef.z,
+          chunkX: localChunk.x,
+          chunkZ: localChunk.z,
           tick: 0,
         };
         this._sendToPeer(peerId, ack);
@@ -538,6 +619,7 @@ class PeerMeshClass {
               playerName: p.playerName,
               dinoId: p.dinoId,
               colors: p.colors,
+              packCode: p.packCode,
               chunkX: p.chunkX,
               chunkZ: p.chunkZ,
             })),
@@ -559,21 +641,28 @@ class PeerMeshClass {
         playerName: msg.playerName,
         dinoId: msg.dinoId,
         colors: msg.colors,
+        packCode: msg.packCode,
+        posX: msg.posX,
+        posZ: msg.posZ,
         chunkX: msg.chunkX,
         chunkZ: msg.chunkZ,
         connectedAt: Date.now(),
       });
       this._notifyPeerListChanged();
+      this._autoJoinByPackCode(peerId, msg.packCode);
     }
   }
 
   private _handleRemoteEvent(msg: EventMessage): void {
-    EventBus.push(msg.event);
+    EventReplicator.receiveEvent(msg.event);
   }
 
   private _handlePlayerState(msg: PlayerStateMessage): void {
-    // Remote player state é armazenado em um Map local para uso futuro (Sprint 4)
+    const isNew = !this._remotePlayerStates.has(msg.peerId);
     this._remotePlayerStates.set(msg.peerId, msg);
+    if (isNew) {
+      this._notifyPeerListChanged();
+    }
   }
 
   private _handleHeartbeat(peerId: string, msg: HeartbeatMessage): void {
@@ -600,25 +689,38 @@ class PeerMeshClass {
         playerName: p.playerName,
         dinoId: p.dinoId,
         colors: p.colors,
+        packCode: p.packCode,
+        posX: 0,
+        posZ: 0,
         chunkX: p.chunkX,
         chunkZ: p.chunkZ,
         connectedAt: Date.now(),
       });
 
+      this._autoJoinByPackCode(p.peerId, p.packCode);
+
       // Conecta diretamente ao peer
       const conn = this._ownPeer!.connect(p.peerId, { reliable: true });
+
+      conn.on('data', (raw) => {
+        this._handleMessage(p.peerId, raw as PeerMeshMessage);
+      });
+
       conn.on('open', () => {
         this._connections.set(p.peerId, conn);
         this._lastPeerHeartbeat.set(p.peerId, Date.now());
-        const chunk = worldToChunk(0, 0);
+        const localChunk = this._getCurrentChunk();
         const hs: PeerHandshakeMessage = {
           type: 'peer_handshake',
           peerId: this._ownPeerId,
           playerName: this._playerName,
           dinoId: this._dinoId,
           colors: this._colors,
-          chunkX: chunk.x,
-          chunkZ: chunk.z,
+          packCode: this._packCode,
+          posX: PlayerPositionRef.x,
+          posZ: PlayerPositionRef.z,
+          chunkX: localChunk.x,
+          chunkZ: localChunk.z,
           tick: 0,
         };
         this._sendToPeer(p.peerId, hs);
@@ -645,6 +747,17 @@ class PeerMeshClass {
     }
   }
 
+  private _autoJoinByPackCode(peerId: string, theirPackCode: string): void {
+    if (!this._packCode || this._packMembers.length > 0) return;
+    if (theirPackCode !== this._packCode) return;
+    if (this._isPackLeader) return;
+
+    const info = this._peerInfo.get(peerId);
+    if (!info) return;
+
+    this.requestJoinPack(peerId);
+  }
+
   // ── Pack Message Handlers ──
 
   private _handlePackInvite(msg: PackInviteMessage): void {
@@ -664,21 +777,16 @@ class PeerMeshClass {
 
   private _handlePackJoinRequest(msg: PackJoinRequestMessage): void {
     if (!this._isPackLeader) return;
-    this.onPackJoinRequest?.(msg.fromPeerId, msg.fromPlayerName, msg.fromDinoId);
+    // Auto-aceita: adiciona ao bando sem necessidade de aprovação
+    this._addPackMember(msg.fromPeerId);
+    this.respondToPackJoinRequest(msg.fromPeerId, true);
   }
 
   private _handlePackJoinResponse(msg: PackJoinResponseMessage): void {
     if (msg.accept) {
-      const leaderPeerId = useAppStore.getState().packLeaderPeerId;
-      if (!leaderPeerId) return;
-      this._packMembers.push({
-        peerId: this._ownPeerId,
-        playerName: this._playerName,
-        dinoId: this._dinoId,
-      });
-      useAppStore.getState().setPackRole('member');
-      useAppStore.getState().setPackMembers(this._packMembers);
-      useAppStore.getState().setPackLeaderPeerId(msg.fromPeerId);
+      // Usamos msg.fromPeerId como líder (já que ele aprovou)
+      const leaderPeerId = msg.fromPeerId;
+      useAppStore.getState().setPackLeaderPeerId(leaderPeerId);
     } else {
       useAppStore.getState().setPackLeaderPeerId(null);
     }
@@ -726,6 +834,7 @@ class PeerMeshClass {
     this._connections.delete(peerId);
     this._peerInfo.delete(peerId);
     this._lastPeerHeartbeat.delete(peerId);
+    this._remotePlayerStates.delete(peerId);
 
     if (this._isPackLeader) {
       this._removePackMember(peerId);
@@ -779,7 +888,9 @@ class PeerMeshClass {
 
   private _startHeartbeat(): void {
     this._heartbeatTimer = setInterval(() => {
-      const chunk = worldToChunk(0, 0);
+      const px = PlayerPositionRef.x;
+      const pz = PlayerPositionRef.z;
+      const chunk = worldToChunk(px, pz);
       const renderDistance = useAppStore.getState().renderDistance;
       const hb: HeartbeatMessage = {
         type: 'heartbeat',

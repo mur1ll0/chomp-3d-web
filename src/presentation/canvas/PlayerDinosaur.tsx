@@ -11,7 +11,7 @@ import { useKeyboard } from '../../useCases/game/useKeyboard';
 import { MapGenerator, getWaterValue, WATER_THRESHOLD } from '../../infrastructure/generation/MapGenerator';
 import type { ChunkData, MapEdible } from '../../infrastructure/generation/MapGenerator';
 import { NPCManager } from '../../useCases/game/NPCManager';
-import { playerAttackNPC } from '../../useCases/game/CombatSystem';
+import { playerAttackNPCWithEvent } from '../../useCases/game/CombatSystem';
 import { PlayerPositionRef } from '../../useCases/game/PlayerPositionRef';
 import { calculateFinalScale, calculateInteractRadius, calculateBiteDamage, calculatePercentageDamage, calculateCarcassNutritionByLevel } from '../../domain/services/DinosaurService';
 import { useDinosaurAnimations } from '../hooks/useDinosaurAnimations';
@@ -19,7 +19,6 @@ import { cloneSkinnedMesh } from '../utils/ThreeUtils';
 import { peerSession } from '../../infrastructure/network/PeerSession';
 import { PeerMesh } from '../../infrastructure/network/PeerMesh';
 import { SpawnResolver } from '../../useCases/game/SpawnResolver';
-import { PackCodec } from '../../useCases/game/PackCodec';
 import { WORLD_SEED } from '../../infrastructure/generation/MapGenerator';
 
 // Vetores reutilizáveis para evitar alocações por frame (GC pressure)
@@ -165,17 +164,16 @@ export const PlayerDinosaur: React.FC = () => {
     return () => window.removeEventListener('wheel', handleWheel);
   }, []);
 
-  // Spawn determinístico — computado DURANTE o render (não em effect), usado no <group position>
+  // Spawn: se estiver em um pack remoto, spawna na posição do líder
   const initialPosition = useMemo<[number, number, number]>(() => {
-    const resolver = new SpawnResolver(WORLD_SEED);
-    const packCode = useAppStore.getState().packCode;
-    if (packCode) {
-      const decoded = PackCodec.decode(packCode);
-      if (decoded && decoded.speciesId === selectedDinoId) {
-        const pos = resolver.resolveByPackCode(selectedDinoId, decoded.chunkX, decoded.chunkZ);
-        return [pos.worldX, 0, pos.worldZ];
+    const isMulti = useAppStore.getState().gameMode === 'party' || useAppStore.getState().gameMode === 'global';
+    if (isMulti) {
+      const leaderPos = PeerMesh.getPackLeaderPosition();
+      if (leaderPos) {
+        return [leaderPos.x, 0, leaderPos.z];
       }
     }
+    const resolver = new SpawnResolver(WORLD_SEED);
     const herbivoreRoster = DINOSAUR_ROSTER.filter(d => d.diet === 'Herbivore').map(d => d.id);
     const pos = resolver.resolve(selectedDinoId, herbivoreRoster, dinoStats.diet);
     return [pos.worldX, 0, pos.worldZ];
@@ -264,9 +262,10 @@ export const PlayerDinosaur: React.FC = () => {
         if (useAppStore.getState().onlineRole) {
           // NPCs não têm bando — ataque normalmente
         }
-        const event = playerAttackNPC(
+        const event = playerAttackNPCWithEvent(
           px, pz, finalScale,
-          dinoStats.strength, level, npc
+          dinoStats.strength, level, npc,
+          NPCManager.getSimulationTick()
         );
         if (event) {
           // XP por causar dano

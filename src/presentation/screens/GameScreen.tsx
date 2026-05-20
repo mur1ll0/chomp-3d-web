@@ -1,12 +1,13 @@
 import React, { useMemo, Suspense } from 'react';
+import { PlayerPositionRef } from '../../useCases/game/PlayerPositionRef';
 import * as THREE from 'three';
 import { Canvas } from '@react-three/fiber';
 import { useAppStore } from '../../store/useAppStore';
 import { useT, tStandalone } from '../../i18n/useT';
 import { ArrowLeft, Settings } from 'lucide-react';
 import { MapGenerator } from '../../infrastructure/generation/MapGenerator';
-import { peerSession } from '../../infrastructure/network/PeerSession';
 import { PeerMesh } from '../../infrastructure/network/PeerMesh';
+import { peerSession } from '../../infrastructure/network/PeerSession';
 import { ProceduralMap } from '../canvas/ProceduralMap';
 import { PlayerDinosaur } from '../canvas/PlayerDinosaur';
 import { EdiblesManager } from '../canvas/EdiblesManager';
@@ -67,6 +68,24 @@ const DeathScreen: React.FC<{ onLeave: () => Promise<void> | void }> = ({ onLeav
         {isOnline ? t('game.death.backToSelect') : t('game.death.backToMenu')}
       </button>
     </div>
+  );
+};
+
+// Componente que exibe coordenadas globais (lê PlayerPositionRef diretamente)
+const PositionDisplay: React.FC = () => {
+  const [coords, setCoords] = React.useState({ x: 0, z: 0 });
+  React.useEffect(() => {
+    const intervalId = setInterval(() => {
+      const x = PlayerPositionRef.x;
+      const z = PlayerPositionRef.z;
+      setCoords(c => (c.x !== Math.round(x) || c.z !== Math.round(z)) ? { x: Math.round(x), z: Math.round(z) } : c);
+    }, 200);
+    return () => clearInterval(intervalId);
+  }, []);
+  return (
+    <span className="text-xs text-slate-400 font-mono">
+      X:{coords.x} Z:{coords.z}
+    </span>
   );
 };
 
@@ -136,7 +155,6 @@ export const GameScreen: React.FC = () => {
   const isDead = useAppStore(s => s.isDead);
   const sessionCode = useAppStore(s => s.sessionCode);
   
-  const onlineRole = useAppStore(s => s.onlineRole);
   const isOnline = gameMode === 'party' || gameMode === 'global';
 
   // Wire up pack callbacks
@@ -154,20 +172,25 @@ export const GameScreen: React.FC = () => {
       showPackInfo(tStandalone('pack.info', { n: members.length }));
     };
 
+    // TEST WORKER
+    const worker = new Worker(new URL('../../infrastructure/network/NetworkWorker.ts', import.meta.url), { type: 'module' });
+    worker.onmessage = (e) => console.log('WORKER MSG:', e.data);
+    worker.postMessage({ type: 'start' });
+
     return () => {
       PeerMesh.onPackInvite = null;
       PeerMesh.onPackJoinRequest = null;
       PeerMesh.onPackKicked = null;
       PeerMesh.onPackMemberUpdate = null;
+      worker.terminate();
     };
   }, []);
 
   const handleLeaveGame = async () => {
-    if (gameMode === 'party' || gameMode === 'global') {
-      await PeerMesh.destroy();
-    }
-    if (onlineRole === 'host' || gameMode === 'online') {
+    if (gameMode === 'party') {
       peerSession.destroy();
+    } else if (gameMode === 'global') {
+      await PeerMesh.destroy();
     }
     setScreen('menu');
   };
@@ -218,6 +241,9 @@ export const GameScreen: React.FC = () => {
           <div className="font-bold text-orange-400 flex items-center gap-2">
             <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500 animate-pulse' : 'bg-slate-500'}`}></span>
             {selectedDinoId}
+          </div>
+          <div className="flex items-center gap-2 mt-1">
+            <PositionDisplay />
           </div>
           {isOnline && (
             <div className="text-lg mt-1 flex items-center justify-center gap-2 bg-slate-800/40 rounded-md px-2 py-0.5">

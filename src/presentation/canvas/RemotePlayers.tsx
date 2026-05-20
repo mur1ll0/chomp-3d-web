@@ -1,4 +1,4 @@
-import React, { useRef, useMemo, useEffect } from 'react';
+import React, { useRef, useMemo, useEffect, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Text, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
@@ -6,28 +6,32 @@ import { DINOSAUR_ROSTER } from '../../domain/models/DinosaurStats';
 import { getNPCScaleFactor } from '../../domain/models/NPCDinosaur';
 import { useAppStore } from '../../store/useAppStore';
 import { PeerMesh } from '../../infrastructure/network/PeerMesh';
+import { PlayerPositionRef } from '../../useCases/game/PlayerPositionRef';
 import { cloneSkinnedMesh } from '../utils/ThreeUtils';
-import { useDinosaurAnimations } from '../hooks/useDinosaurAnimations';
-import type { PlayerStateMessage } from '../../infrastructure/network/messages';
 
 const _tempPos = new THREE.Vector3();
 
 const ONESHOT_INTENTS = new Set(['Attack', 'Eat', 'Death']);
 
-const RemotePlayerInstance: React.FC<{ state: PlayerStateMessage; name: string; dinoId: string }> = ({ state, name, dinoId }) => {
+function findClip(animations: THREE.AnimationClip[], intent: string): THREE.AnimationClip | null {
+  for (const clip of animations) {
+    if (clip.name === intent) return clip;
+    const lower = clip.name.toLowerCase();
+    const search = intent.toLowerCase();
+    if (lower.includes(search)) return clip;
+  }
+  return animations[0] ?? null;
+}
+
+const RemotePlayerInstance: React.FC<{ peerId: string; name: string; dinoId: string; colors: Record<string, string> }> = ({ peerId, name, dinoId, colors }) => {
   const stats = useMemo(() => DINOSAUR_ROSTER.find(d => d.id === dinoId) ?? DINOSAUR_ROSTER[0], [dinoId]);
   const gltf = useGLTF(stats.modelPath);
   const groupRef = useRef<THREE.Group>(null);
-  const stateRef = useRef(state);
   const prevAnimIntent = useRef('');
+  const [remoteLevel, setRemoteLevel] = useState(1);
 
-  useEffect(() => {
-    stateRef.current = state;
-  }, [state]);
-
-  const { clonedScene } = useMemo(() => {
+  const { clonedScene, mixer } = useMemo(() => {
     const clone = cloneSkinnedMesh(gltf.scene);
-    const mats: THREE.MeshStandardMaterial[] = [];
     clone.position.set(0, 0, 0);
     clone.rotation.set(0, 0, 0);
     clone.scale.set(1, 1, 1);
@@ -37,25 +41,60 @@ const RemotePlayerInstance: React.FC<{ state: PlayerStateMessage; name: string; 
       }
       if ((child as THREE.Mesh).isMesh) {
         const mesh = child as THREE.Mesh;
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
         if (mesh.material && !Array.isArray(mesh.material)) {
           const mat = (mesh.material as THREE.MeshStandardMaterial).clone();
-          mats.push(mat);
           mesh.material = mat;
         }
       }
     });
-    return { clonedScene: clone };
-  }, [gltf.scene]);
 
-  const { playAnimation } = useDinosaurAnimations(gltf, clonedScene);
+    if (Object.keys(colors).length > 0) {
+      clone.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh || (child as THREE.SkinnedMesh).isSkinnedMesh) {
+          const mesh = child as THREE.Mesh;
+          if (mesh.material && !Array.isArray(mesh.material)) {
+            const mat = mesh.material as THREE.MeshStandardMaterial;
+            if (mat.name && colors[mat.name]) {
+              mat.color.set(colors[mat.name]);
+            }
+          }
+        }
+      });
+    }
+
+    const m = new THREE.AnimationMixer(clone);
+    const clip = findClip(gltf.animations ?? [], 'Idle');
+    if (clip) {
+      const action = m.clipAction(clip);
+      action.play();
+    }
+
+    return { clonedScene: clone, mixer: m };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gltf.scene, gltf.animations, dinoId]);
+
+  useEffect(() => {
+    return () => {
+      mixer.stopAllAction();
+    };
+  }, [mixer]);
+
+  // Animação throttled: mixer atualiza a ~10fps (sincronizado com frequência do player_state)
+  const animThrottle = useRef(0);
 
   useFrame((_, delta) => {
     if (!groupRef.current) return;
-    const s = stateRef.current;
-    const interp = Math.min(1, delta * 12);
 
+    const latestStates = PeerMesh.getRemotePlayerStates();
+    const s = latestStates.get(peerId);
+    if (!s) return;
+
+    if (s.level && s.level !== remoteLevel) {
+      setRemoteLevel(s.level);
+    }
+
+    // Sempre interpola posição/rotação (mesmo invisível, para reentrada suave)
+    const interp = Math.min(1, delta * 12);
     groupRef.current.position.lerp(_tempPos.set(s.posX, s.posY ?? 0, s.posZ), interp);
 
     let angleDiff = s.rotY - groupRef.current.rotation.y;
@@ -65,19 +104,43 @@ const RemotePlayerInstance: React.FC<{ state: PlayerStateMessage; name: string; 
 
     groupRef.current.updateMatrixWorld();
 
+    // Culling por distância: não renderiza se muito longe (poupa GPU/CPU)
+    const RENDER_DISTANCE_SQ = 40000;
+    const dx = s.posX - PlayerPositionRef.x;
+    const dz = s.posZ - PlayerPositionRef.z;
+    groupRef.current.visible = (dx * dx + dz * dz) <= RENDER_DISTANCE_SQ;
+    if (!groupRef.current.visible) return;
+
     const intent = s.animationIntent || 'Idle';
-    const isOneShot = ONESHOT_INTENTS.has(intent);
     const intentChanged = intent !== prevAnimIntent.current;
     prevAnimIntent.current = intent;
 
-    if (isOneShot) {
-      if (intentChanged) playAnimation(intent, false);
-    } else {
-      playAnimation(intent, true);
+    if (intentChanged) {
+      const clip = findClip(gltf.animations ?? [], intent);
+      if (clip) {
+        const isOneShot = ONESHOT_INTENTS.has(intent);
+        const action = mixer.clipAction(clip);
+        action.reset();
+        if (isOneShot) {
+          action.setLoop(THREE.LoopOnce, 1);
+          action.clampWhenFinished = true;
+        } else {
+          action.setLoop(THREE.LoopRepeat, Infinity);
+          action.clampWhenFinished = false;
+        }
+        action.play();
+      }
+    }
+
+    // Mixer update throttled: ~10fps para reduzir custo de animação esquelética
+    animThrottle.current += delta;
+    if (animThrottle.current >= 0.1) {
+      mixer.update(animThrottle.current);
+      animThrottle.current = 0;
     }
   });
 
-  const currentScale = getNPCScaleFactor(state.level ?? 1, stats);
+  const currentScale = getNPCScaleFactor(remoteLevel, stats);
 
   return (
     <group ref={groupRef}>
@@ -101,6 +164,8 @@ const RemotePlayerInstance: React.FC<{ state: PlayerStateMessage; name: string; 
 
 export const RemotePlayers: React.FC = () => {
   const gameMode = useAppStore(s => s.gameMode);
+  const connectedPlayers = useAppStore(s => s.connectedPlayers);
+  void connectedPlayers;
 
   if (gameMode === 'single' || gameMode === null) return null;
 
@@ -108,18 +173,17 @@ export const RemotePlayers: React.FC = () => {
   const connectedPeers = PeerMesh.getConnectedPeers();
   const ownPeerId = PeerMesh.getOwnPeerId();
 
-  const peerInfoMap = new Map<string, string>();
+  const peerInfoMap = new Map<string, { dinoId: string; colors: Record<string, string>; playerName: string }>();
   for (const p of connectedPeers) {
-    peerInfoMap.set(p.peerId, p.dinoId);
+    peerInfoMap.set(p.peerId, { dinoId: p.dinoId, colors: p.colors, playerName: p.playerName });
   }
 
-  const entries: Array<{ state: PlayerStateMessage; name: string; dinoId: string; id: string }> = [];
-  for (const [peerId, state] of remoteStates) {
+  const entries: Array<{ peerId: string; name: string; dinoId: string; colors: Record<string, string> }> = [];
+  for (const [peerId] of remoteStates) {
     if (peerId === ownPeerId) continue;
-    const info = connectedPeers.find(p => p.peerId === peerId);
-    const displayName = info?.playerName ?? peerId;
-    const dinoId = peerInfoMap.get(peerId) ?? 'Velociraptor';
-    entries.push({ state, name: displayName, dinoId, id: peerId });
+    const info = peerInfoMap.get(peerId);
+    if (!info) continue;
+    entries.push({ peerId, name: info.playerName, dinoId: info.dinoId, colors: info.colors });
   }
 
   if (entries.length === 0) return null;
@@ -127,8 +191,8 @@ export const RemotePlayers: React.FC = () => {
   return (
     <group>
       {entries.map(e => (
-        <React.Suspense key={e.id} fallback={null}>
-          <RemotePlayerInstance state={e.state} name={e.name} dinoId={e.dinoId} />
+        <React.Suspense key={e.peerId} fallback={null}>
+          <RemotePlayerInstance peerId={e.peerId} name={e.name} dinoId={e.dinoId} colors={e.colors} />
         </React.Suspense>
       ))}
     </group>

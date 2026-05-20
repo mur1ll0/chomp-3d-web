@@ -4,9 +4,8 @@ import { useT } from '../../i18n/useT';
 import { DINOSAUR_ROSTER, type Diet } from '../../domain/models/DinosaurStats';
 import { ArrowLeft, Play, Loader2, Shuffle } from 'lucide-react';
 import { PeerMesh } from '../../infrastructure/network/PeerMesh';
-import { SpawnResolver } from '../../useCases/game/SpawnResolver';
-import { PackCodec } from '../../useCases/game/PackCodec';
-import { WORLD_SEED } from '../../infrastructure/generation/MapGenerator';
+import { peerSession } from '../../infrastructure/network/PeerSession';
+import { EventReplicator } from '../../infrastructure/network/EventReplicator';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Center, Environment, useGLTF, Bounds } from '@react-three/drei';
 import * as THREE from 'three';
@@ -208,13 +207,13 @@ export const CharacterSelectionMenu: React.FC = () => {
 
     if (gameMode === 'party') {
       try {
-        PeerMesh.setPlayerInfo(playerName, selectedDinoId, useAppStore.getState().dinoColors);
-        await PeerMesh.startParty(sessionCode || undefined);
         if (sessionCode) {
-          setSessionCode(PeerMesh.getSessionCode());
+          await peerSession.joinSession(sessionCode, { playerName, dinoId: selectedDinoId, dinoColors: useAppStore.getState().dinoColors });
         } else {
-          setSessionCode(PeerMesh.getSessionCode());
+          await peerSession.startHost();
         }
+        useAppStore.getState().setOnlineRole(sessionCode ? 'client' : 'host');
+        setSessionCode(peerSession.getSessionCode());
       } catch {
         alert(t('char.alert.partyError'));
         return;
@@ -223,6 +222,13 @@ export const CharacterSelectionMenu: React.FC = () => {
 
     if (gameMode === 'global') {
       try {
+        let code = useAppStore.getState().packCode;
+        if (!code) {
+          code = PeerMesh.getSessionCode(); // Fallback if no code typed
+        }
+        setPackCode(code);
+        PeerMesh.setPackCode(code);
+        
         PeerMesh.setPlayerInfo(playerName, selectedDinoId, useAppStore.getState().dinoColors);
         await PeerMesh.startGlobal();
       } catch {
@@ -231,15 +237,36 @@ export const CharacterSelectionMenu: React.FC = () => {
       }
     }
 
-    // Auto-gera código do pack se não entrou em um existente
+    // Ativa replicação de eventos (NPC combat, etc.) entre peers
     if (gameMode === 'global' || gameMode === 'party') {
-      if (!useAppStore.getState().packCode) {
-        const herbivoreRoster = DINOSAUR_ROSTER.filter(d => d.diet === 'Herbivore').map(d => d.id);
-        const resolver = new SpawnResolver(WORLD_SEED);
-        const pos = resolver.resolve(selectedDinoId, herbivoreRoster, selectedDino.diet);
-        setPackCode(PackCodec.fromSpawnPosition(selectedDinoId, pos.chunkX, pos.chunkZ));
+      EventReplicator.enable();
+    }
+
+    // Associa pack code: Party = session code, Global = código digitado ou auto-gerado
+    if (gameMode === 'global' || gameMode === 'party') {
+      let code: string;
+      if (gameMode === 'party') {
+        code = peerSession.getSessionCode();
+        setPackCode(code);
+        // Party mode pack is handled inherently by PeerSession's pack logic
+      } else {
+        code = useAppStore.getState().packCode || PeerMesh.getSessionCode();
+
+        // Aguarda mais tempo para conexões p2p (handshakes) completarem
+        await new Promise(r => setTimeout(r, 3000));
+        if (!PeerMesh.getPackMembers().length) {
+          // Só cria se nenhum outro peer conectado já possuir o mesmo packCode
+          const peers = PeerMesh.getConnectedPeers();
+          const hasLeader = peers.some(p => p.packCode === code);
+          if (!hasLeader) {
+            PeerMesh.createPack();
+          } else {
+            // Se tem líder mas não entrou no pack automaticamente (provavelmente por lag de WebRTC), tenta forçar o join
+            const leader = peers.find(p => p.packCode === code);
+            if (leader) PeerMesh.requestJoinPack(leader.peerId);
+          }
+        }
       }
-      PeerMesh.createPack();
     }
 
     setScreen('game');
@@ -298,7 +325,7 @@ export const CharacterSelectionMenu: React.FC = () => {
             </div>
           )}
 
-          {(gameMode === 'party' || gameMode === 'global') && (
+          {gameMode === 'global' && (
             <div className="space-y-2">
               <label className="block text-sm font-medium text-slate-400">{t('char.packCode')}</label>
               <input
@@ -307,10 +334,7 @@ export const CharacterSelectionMenu: React.FC = () => {
                 onChange={(e) => {
                   setPackCodeInput(e.target.value.toUpperCase());
                   if (e.target.value.trim()) {
-                    const decoded = PackCodec.decode(e.target.value.trim().toUpperCase());
-                    if (decoded && decoded.speciesId === selectedDinoId) {
-                      setPackCode(e.target.value.trim().toUpperCase());
-                    }
+                    setPackCode(e.target.value.trim().toUpperCase());
                   } else {
                     setPackCode('');
                   }

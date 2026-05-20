@@ -107,6 +107,9 @@ export interface PeerHandshakeMessage {
   playerName: string;
   dinoId: string;
   colors: Record<string, string>;
+  packCode: string;
+  posX: number;
+  posZ: number;
   chunkX: number;
   chunkZ: number;
   tick: number;
@@ -118,6 +121,9 @@ export interface PeerHandshakeAckMessage {
   playerName: string;
   dinoId: string;
   colors: Record<string, string>;
+  packCode: string;
+  posX: number;
+  posZ: number;
   chunkX: number;
   chunkZ: number;
   tick: number;
@@ -158,6 +164,7 @@ export interface PeerListMessage {
     playerName: string;
     dinoId: string;
     colors: Record<string, string>;
+    packCode: string;
     chunkX: number;
     chunkZ: number;
   }>;
@@ -224,6 +231,13 @@ export interface PackLeaveMessage {
   peerId: string;
 }
 
+export interface NpcSnapshotMessage {
+  type: 'npc_snapshot';
+  tick: number;
+  npcs: any[];
+  players: any[];
+}
+
 export type PeerMeshMessage =
   | PeerHandshakeMessage
   | PeerHandshakeAckMessage
@@ -239,4 +253,5 @@ export type PeerMeshMessage =
   | PackJoinResponseMessage
   | PackKickMessage
   | PackMemberUpdateMessage
-  | PackLeaveMessage;
+  | PackLeaveMessage
+  | NpcSnapshotMessage;
