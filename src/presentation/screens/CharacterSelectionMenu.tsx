@@ -213,7 +213,12 @@ export const CharacterSelectionMenu: React.FC = () => {
           await peerSession.startHost();
         }
         useAppStore.getState().setOnlineRole(sessionCode ? 'client' : 'host');
-        setSessionCode(peerSession.getSessionCode());
+        const code = peerSession.getSessionCode();
+        setSessionCode(code);
+        PeerMesh.setPlayerInfo(playerName, selectedDinoId, useAppStore.getState().dinoColors);
+        // Host: startParty() sem código (cria peer com o código da sessão)
+        // Client: startParty(código) (conecta ao peer do host)
+        await PeerMesh.startParty(sessionCode ? code : undefined);
       } catch {
         alert(t('char.alert.partyError'));
         return;

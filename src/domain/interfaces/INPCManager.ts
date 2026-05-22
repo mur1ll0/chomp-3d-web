@@ -39,4 +39,5 @@ export interface INPCManager {
 
   update(delta: number, playerX: number, playerZ: number, playerLevel: number, playerScale: number, playerDiet: Diet, playerStrength: number): void;
   consumeEventsFromBus(maxTick: number): void;
+  spawnPlayerCarcass(peerId: string, posX: number, posZ: number, dinoId: string, level: number): void;
 }

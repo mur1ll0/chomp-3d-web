@@ -188,6 +188,7 @@ export const GameScreen: React.FC = () => {
 
   const handleLeaveGame = async () => {
     if (gameMode === 'party') {
+      PeerMesh.broadcastDisconnect();
       peerSession.destroy();
     } else if (gameMode === 'global') {
       await PeerMesh.destroy();

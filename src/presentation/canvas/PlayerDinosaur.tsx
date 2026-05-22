@@ -13,11 +13,12 @@ import type { ChunkData, MapEdible } from '../../infrastructure/generation/MapGe
 import { NPCManager } from '../../useCases/game/NPCManager';
 import { playerAttackNPCWithEvent } from '../../useCases/game/CombatSystem';
 import { PlayerPositionRef } from '../../useCases/game/PlayerPositionRef';
-import { calculateFinalScale, calculateInteractRadius, calculateBiteDamage, calculatePercentageDamage, calculateCarcassNutritionByLevel } from '../../domain/services/DinosaurService';
+import { calculateFinalScale, calculateInteractRadius, calculateBiteDamage, calculatePercentageDamage, calculateCarcassNutritionByLevel, isInInteractionRange } from '../../domain/services/DinosaurService';
 import { useDinosaurAnimations } from '../hooks/useDinosaurAnimations';
 import { cloneSkinnedMesh } from '../utils/ThreeUtils';
 import { peerSession } from '../../infrastructure/network/PeerSession';
 import { PeerMesh } from '../../infrastructure/network/PeerMesh';
+import { EventBus } from '../../infrastructure/network/EventBus';
 import { SpawnResolver } from '../../useCases/game/SpawnResolver';
 import { WORLD_SEED } from '../../infrastructure/generation/MapGenerator';
 
@@ -143,11 +144,15 @@ export const PlayerDinosaur: React.FC = () => {
   const movementRamp = useRef(0);
   const isGrounded = useRef(true);
   const isActionLocked = useRef(false);
+  const currentActionType = useRef<string>('');
+  const actionId = useRef<number>(0);
   const chunksRef = useRef<ChunkData[]>([]); // Cache de chunks próximos
   const lastChunkRef = useRef({ x: Infinity, z: Infinity });
-  const currentActionType = useRef(''); // 'Attack' | 'Eat' | ''
   const lastMoveAngle = useRef(0); // Último targetAngle calculado (evita Euler singularity em PI)
   const collisionFrameCounter = useRef(0); // Throttle colisão quando parado
+
+  const wasDeadRef = useRef(false);
+  const lastPvpAttackRef = useRef<{ targetPeerId: string; damage: number } | null>(null);
 
   // Debug Zoom logic
   const zoomOffset = useRef(0);
@@ -223,6 +228,7 @@ export const PlayerDinosaur: React.FC = () => {
     isActionLocked.current = true;
     setIsActing(true);
     currentActionType.current = 'Eat';
+    actionId.current = Date.now();
     const action = playAnimation('Eat', false);
     const durationMs = action && action.getClip() ? action.getClip().duration * 1000 : 1500;
 
@@ -248,6 +254,7 @@ export const PlayerDinosaur: React.FC = () => {
     isActionLocked.current = true;
     setIsActing(true);
     currentActionType.current = 'Attack';
+    actionId.current = Date.now();
     const action = playAnimation('Attack', false);
     const durationMs = action && action.getClip() ? action.getClip().duration * 1000 : 1000;
 
@@ -256,12 +263,9 @@ export const PlayerDinosaur: React.FC = () => {
       const px = playerRef.current.position.x;
       const pz = playerRef.current.position.z;
       const activeNPCs = NPCManager.getActiveNPCs();
+      let hasAttacked = false;
 
       for (const npc of activeNPCs) {
-        // Em modo online, não pode atacar aliados do mesmo bando
-        if (useAppStore.getState().onlineRole) {
-          // NPCs não têm bando — ataque normalmente
-        }
         const event = playerAttackNPCWithEvent(
           px, pz, finalScale,
           dinoStats.strength, level, npc,
@@ -274,7 +278,55 @@ export const PlayerDinosaur: React.FC = () => {
             // Bônus de XP por matar
             useAppStore.getState().gainXp(50 * npc.level);
           }
+          hasAttacked = true;
           break; // Ataca apenas 1 NPC por vez
+        }
+      }
+
+      // Lógica de PvP: verifica colisão com outros jogadores remotos
+      if (!hasAttacked) {
+        const remoteStates = PeerMesh.getRemotePlayerStates();
+        const connectedPeers = PeerMesh.getConnectedPeers();
+        const ownPeerId = PeerMesh.getOwnPeerId();
+        const packMembers = useAppStore.getState().packMembers;
+        const packMemberIds = new Set(packMembers.map(m => m.peerId));
+
+        for (const [peerId, state] of remoteStates) {
+          if (peerId === ownPeerId) continue;
+          
+          // Previne fogo amigo se estiverem no mesmo bando
+          if (packMemberIds.has(peerId)) continue;
+
+          // Não ataca jogador morto
+          if (state.isDead) continue;
+
+          const peerInfo = connectedPeers.find(p => p.peerId === peerId);
+          if (!peerInfo) continue;
+
+          const remoteStats = DINOSAUR_ROSTER.find(d => d.id === peerInfo.dinoId);
+          if (!remoteStats) continue;
+
+          const remoteScale = getNPCScaleFactor(state.level, remoteStats);
+          const remoteRadius = remoteStats.collisionRadius * remoteScale;
+          const interactRadius = calculateInteractRadius(PlayerPositionRef.interactRadius, finalScale);
+
+          if (isInInteractionRange(px, pz, state.posX, state.posZ, interactRadius, remoteRadius)) {
+            const baseDamage = calculateBiteDamage(dinoStats.strength, level);
+            const damage = baseDamage * Math.max(1, finalScale) * 15;
+              EventBus.push({
+                type: 'player_attacked',
+                tick: NPCManager.getSimulationTick(),
+                originPeerId: ownPeerId,
+                data: {
+                  targetPeerId: peerId,
+                  damage: damage
+                }
+              });
+              // XP por causar dano em player
+              useAppStore.getState().gainXp(Math.floor(damage * 5));
+              lastPvpAttackRef.current = { targetPeerId: peerId, damage };
+              break; // Ataca apenas 1 jogador por vez
+          }
         }
       }
     }
@@ -393,8 +445,31 @@ export const PlayerDinosaur: React.FC = () => {
     let groundY = inWater ? -3 * finalScale : 0;
 
     if (isDead) {
-      PlayerPositionRef.animationIntent = 'Death';
-      playAnimation('Death', false);
+      if (!wasDeadRef.current) {
+        wasDeadRef.current = true;
+        PlayerPositionRef.isDead = true;
+        PlayerPositionRef.animationIntent = 'Death';
+        playAnimation('Death', false);
+        sendClientInput(false, false, false, false);
+        // Envia estado de morte via PeerMesh (global/party) para que jogadores remotos
+        // vejam a animação de morte imediatamente
+        const pmGM = useAppStore.getState().gameMode;
+        if (pmGM === 'party' || pmGM === 'global') {
+          PeerMesh.sendPlayerState({
+            peerId: PeerMesh.getOwnPeerId(),
+            posX: PlayerPositionRef.x,
+            posY: PlayerPositionRef.y,
+            posZ: PlayerPositionRef.z,
+            rotY: PlayerPositionRef.rotY,
+            health: 0,
+            maxHealth: useAppStore.getState().maxHealth,
+            isDead: true,
+            animationIntent: 'Death',
+            level: PlayerPositionRef.level,
+            scale: PlayerPositionRef.scale,
+          }, true); // force=true para ignorar throttle de 100ms
+        }
+      }
       if (!isGrounded.current) {
         const gravityForce = 100;
         yVelocity.current -= gravityForce * delta;
@@ -405,8 +480,32 @@ export const PlayerDinosaur: React.FC = () => {
 
     // Durante ação (Attack/Eat), sincroniza animationIntent e envia input para rede
     if (isActionLocked.current) {
-      PlayerPositionRef.animationIntent = currentActionType.current || 'Attack';
+      PlayerPositionRef.animationIntent = currentActionType.current ? `${currentActionType.current}_${actionId.current}` : 'Attack';
       sendClientInput(currentActionType.current === 'Attack', currentActionType.current === 'Eat', false, false);
+      
+      const pmGameMode = useAppStore.getState().gameMode;
+      if (pmGameMode === 'party' || pmGameMode === 'global') {
+        const pendingAttack = lastPvpAttackRef.current;
+        const stateToSend: Parameters<typeof PeerMesh.sendPlayerState>[0] = {
+          peerId: PeerMesh.getOwnPeerId(),
+          posX: PlayerPositionRef.x,
+          posY: PlayerPositionRef.y,
+          posZ: PlayerPositionRef.z,
+          rotY: PlayerPositionRef.rotY,
+          health: useAppStore.getState().health,
+          maxHealth: useAppStore.getState().maxHealth,
+          isDead: PlayerPositionRef.isDead,
+          animationIntent: PlayerPositionRef.animationIntent,
+          level: PlayerPositionRef.level,
+          scale: PlayerPositionRef.scale,
+        };
+        if (pendingAttack) {
+          stateToSend.damageToPeer = pendingAttack.damage;
+          stateToSend.damageToPeerId = pendingAttack.targetPeerId;
+          lastPvpAttackRef.current = null;
+        }
+        PeerMesh.sendPlayerState(stateToSend);
+      }
       return;
     }
 
@@ -667,10 +766,10 @@ export const PlayerDinosaur: React.FC = () => {
           }
         }
       }
-    }
 
-    if (appState.interactableEdibleId !== nearestEdibleId) {
-      appState.setInteractableEdibleId(nearestEdibleId);
+      if (appState.interactableEdibleId !== nearestEdibleId) {
+        appState.setInteractableEdibleId(nearestEdibleId);
+      }
     }
 
     // 5. ATUALIZAR CÂMERA (Sempre por último para evitar jitter/vibração)
@@ -716,7 +815,8 @@ export const PlayerDinosaur: React.FC = () => {
     // PeerMesh (Party/Global): envia estado para renderização remota
     const pmGameMode = useAppStore.getState().gameMode;
     if (pmGameMode === 'party' || pmGameMode === 'global') {
-      PeerMesh.sendPlayerState({
+      const pendingAttack = lastPvpAttackRef.current;
+      const stateToSend: Parameters<typeof PeerMesh.sendPlayerState>[0] = {
         peerId: PeerMesh.getOwnPeerId(),
         posX: PlayerPositionRef.x,
         posY: PlayerPositionRef.y,
@@ -728,7 +828,13 @@ export const PlayerDinosaur: React.FC = () => {
         animationIntent: PlayerPositionRef.animationIntent,
         level: PlayerPositionRef.level,
         scale: PlayerPositionRef.scale,
-      });
+      };
+      if (pendingAttack) {
+        stateToSend.damageToPeer = pendingAttack.damage;
+        stateToSend.damageToPeerId = pendingAttack.targetPeerId;
+        lastPvpAttackRef.current = null;
+      }
+      PeerMesh.sendPlayerState(stateToSend);
     }
   });
 

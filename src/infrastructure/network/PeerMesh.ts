@@ -4,6 +4,7 @@ import { EventBus, type GameEvent } from './EventBus';
 import { EventReplicator } from './EventReplicator';
 import { ChunkInterestManager, worldToChunk } from './ChunkInterestManager';
 import { PlayerPositionRef } from '../../useCases/game/PlayerPositionRef';
+import { NPCManager } from '../../useCases/game/NPCManager';
 import type {
   PeerHandshakeMessage,
   PeerHandshakeAckMessage,
@@ -21,6 +22,7 @@ import type {
   PackKickMessage,
   PackMemberUpdateMessage,
   PackLeaveMessage,
+  PeerDisconnectMessage,
   PeerMeshMessage,
 } from './messages';
 import { useAppStore } from '../../store/useAppStore';
@@ -78,6 +80,7 @@ class PeerMeshClass {
   private _onPeerListChanged: ((peers: PeerInfo[]) => void) | null = null;
   private _isFirstPeer = false;
   private _remotePlayerStates = new Map<string, PlayerStateMessage>();
+  private _carcassSpawned = new Set<string>();
 
   // Pack state
   private _packMembers: PackMemberEntry[] = [];
@@ -93,6 +96,13 @@ class PeerMeshClass {
 
   async startParty(sessionCode?: string): Promise<void> {
     this._mode = 'party';
+
+    // Reforça dados do jogador lendo do store (segurança caso setPlayerInfo
+    // tenha sido chamado antes das cores serem inicializadas na UI).
+    const st = useAppStore.getState();
+    if (st.playerName) this._playerName = st.playerName;
+    if (st.selectedDinoId) this._dinoId = st.selectedDinoId;
+    if (Object.keys(st.dinoColors).length > 0) this._colors = { ...st.dinoColors };
 
     if (!sessionCode) {
       this._isFirstPeer = true;
@@ -110,12 +120,20 @@ class PeerMeshClass {
       await this._connectToHostPeer(this._sessionCode);
     }
 
+    EventReplicator.enable();
     this._startHeartbeat();
   }
 
   async startGlobal(): Promise<void> {
     this._mode = 'global';
     this._sessionCode = GLOBAL_ROOM_CODE;
+
+    // Reforça dados do jogador lendo do store (segurança caso setPlayerInfo
+    // tenha sido chamado antes das cores serem inicializadas na UI).
+    const st = useAppStore.getState();
+    if (st.playerName) this._playerName = st.playerName;
+    if (st.selectedDinoId) this._dinoId = st.selectedDinoId;
+    if (Object.keys(st.dinoColors).length > 0) this._colors = { ...st.dinoColors };
 
     // Tenta ser o host (primeiro peer a entrar no mundo)
     try {
@@ -137,11 +155,29 @@ class PeerMeshClass {
       await this._connectToHostPeer(this._sessionCode);
     }
 
+    EventReplicator.enable();
     useAppStore.getState().setConnectionStatus('connected');
     this._startHeartbeat();
   }
 
+  broadcastDisconnect(): void {
+    const msg: PeerDisconnectMessage = {
+      type: 'peer_disconnect',
+      peerId: this._ownPeerId,
+      isDead: PlayerPositionRef.isDead,
+      posX: PlayerPositionRef.x,
+      posY: PlayerPositionRef.y,
+      posZ: PlayerPositionRef.z,
+      dinoId: this._dinoId,
+      level: PlayerPositionRef.level,
+    };
+    this._broadcast(msg);
+  }
+
   async destroy(): Promise<void> {
+    // Envia pacote de despedida antes de fechar conexões
+    this.broadcastDisconnect();
+
     EventReplicator.disable();
     this._stopHeartbeat();
     EventBus.clear();
@@ -163,6 +199,7 @@ class PeerMeshClass {
     this._onPeerListChanged = null;
     this._isFirstPeer = false;
     this._remotePlayerStates.clear();
+    this._carcassSpawned.clear();
     this._clearPack();
   }
 
@@ -257,17 +294,18 @@ class PeerMeshClass {
     }
   }
 
-  sendPlayerState(state: Omit<PlayerStateMessage, 'type'>): void {
+  sendPlayerState(state: Omit<PlayerStateMessage, 'type'>, force = false): void {
     const now = Date.now();
-    if (now - this._lastPlayerStateSend < PLAYER_STATE_THROTTLE_MS) return;
+    if (!force && now - this._lastPlayerStateSend < PLAYER_STATE_THROTTLE_MS) return;
     this._lastPlayerStateSend = now;
-
     const msg: PlayerStateMessage = { type: 'player_state', ...state };
     this._broadcast(msg);
   }
 
-  broadcastNpcSnapshot(tick: number, npcs: any[], players: any[]): void {
-    const msg: any = { type: 'npc_snapshot', tick, npcs, players };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  broadcastNpcSnapshot(tick: number, npcs: any[], players: any[], edibleStates: Record<string, number>): void {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const msg: any = { type: 'npc_snapshot', tick, npcs, players, edibleStates };
     this._broadcast(msg);
   }
 
@@ -562,21 +600,47 @@ class PeerMeshClass {
       case 'npc_snapshot':
         this._handleNpcSnapshot(msg as any);
         break;
+      case 'peer_disconnect':
+        this._handlePeerDisconnect(msg as PeerDisconnectMessage);
+        break;
     }
   }
 
-  private _handleNpcSnapshot(msg: { tick: number; npcs: any[]; players: any[] }): void {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private _handleNpcSnapshot(msg: { tick: number; npcs: unknown[]; players: unknown[], edibleStates: Record<string, number> }): void {
     useAppStore.getState().setNetworkData(
       msg.npcs,
       msg.players,
       msg.tick,
-      {}
+      msg.edibleStates
     );
+  }
+
+  private _handlePeerDisconnect(msg: PeerDisconnectMessage): void {
+    // Se o peer morreu, gerar carcaça comestível no local
+    if (msg.isDead) {
+      NPCManager.spawnPlayerCarcass(msg.peerId, msg.posX, msg.posZ, msg.dinoId || 't-rex', msg.level || 1);
+      const carcassId = `npc_${msg.peerId}_carcass`;
+      useAppStore.getState().damageEdible(carcassId, 0); // registra como 100%
+    }
+
+    // Remove peer imediatamente (sem esperar timeout)
+    this._onPeerDisconnected(msg.peerId);
   }
 
   private _handleHandshake(peerId: string, msg: PeerHandshakeMessage): void {
     const existing = this._peerInfo.get(peerId);
+
+    // Reentrada: se um peer com o mesmo nome (mas peerId diferente) já estava conectado,
+    // remove a entrada antiga para evitar estado obsoleto (ex: jogador morreu, saiu e voltou).
     if (!existing) {
+      for (const [oldPid, oldInfo] of this._peerInfo) {
+        if (oldInfo.playerName === msg.playerName && oldPid !== peerId) {
+          this._onPeerDisconnected(oldPid);
+          break;
+        }
+      }
+
       this._peerInfo.set(peerId, {
         id: peerId,
         peerId,
@@ -593,7 +657,6 @@ class PeerMeshClass {
       this._notifyPeerListChanged();
       this._autoJoinByPackCode(peerId, msg.packCode);
 
-      // Primeiro peer: ao receber handshake, envia ack + peer list
       if (this._isFirstPeer) {
         const localChunk = this._getCurrentChunk();
         const ack: PeerHandshakeAckMessage = {
@@ -659,9 +722,37 @@ class PeerMeshClass {
 
   private _handlePlayerState(msg: PlayerStateMessage): void {
     const isNew = !this._remotePlayerStates.has(msg.peerId);
+    const wasDead = this._remotePlayerStates.get(msg.peerId)?.isDead === true;
+
     this._remotePlayerStates.set(msg.peerId, msg);
     if (isNew) {
       this._notifyPeerListChanged();
+    }
+
+    // Fallback PvP damage: se esta mensagem carrega dano para nós, aplica
+    if (msg.damageToPeer && msg.damageToPeerId === this._ownPeerId) {
+      const st = useAppStore.getState();
+      if (!st.isDead) {
+        st.takeDamage(msg.damageToPeer);
+      }
+    }
+
+    // Quando um peer remoto morre: spawna carcaça comestível imediatamente
+    // e remove o estado remoto. A carcaça NPC executa a animação de morte
+    // por conta própria (NPCDinosaurs NPCInstance → playAnimation('Death', false)).
+    if (msg.isDead && !wasDead && !this._carcassSpawned.has(msg.peerId)) {
+      this._carcassSpawned.add(msg.peerId);
+      const info = this._peerInfo.get(msg.peerId);
+      NPCManager.spawnPlayerCarcass(
+        msg.peerId,
+        msg.posX,
+        msg.posZ,
+        info?.dinoId ?? 't-rex',
+        msg.level || 1
+      );
+      const carcassId = `npc_${msg.peerId}_carcass`;
+      useAppStore.getState().damageEdible(carcassId, 0);
+      this._remotePlayerStates.delete(msg.peerId);
     }
   }
 
@@ -825,8 +916,18 @@ class PeerMeshClass {
         this.onPackDisbanded?.();
       }
     } else {
-      this._packMembers = this._packMembers.filter(m => m.peerId !== msg.peerId);
-      useAppStore.getState().setPackMembers(this._packMembers);
+      if (useAppStore.getState().packLeaderPeerId === msg.peerId) {
+        this._clearPack();
+        this.onPackDisbanded?.();
+      } else {
+        this._packMembers = this._packMembers.filter(m => m.peerId !== msg.peerId);
+        if (this._packMembers.length <= 1) {
+          this._clearPack();
+          this.onPackDisbanded?.();
+        } else {
+          useAppStore.getState().setPackMembers(this._packMembers);
+        }
+      }
     }
   }
 

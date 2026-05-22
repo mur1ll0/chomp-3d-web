@@ -147,6 +147,11 @@ export interface PlayerStateMessage {
   animationIntent: string;
   level: number;
   scale: number;
+  /** Fallback PvP damage: when the sending player damages another peer,
+   *  this field carries the damage value so the target can apply it
+   *  even if the EventBus event is dropped. */
+  damageToPeer?: number;
+  damageToPeerId?: string;
 }
 
 export interface HeartbeatMessage {
@@ -234,8 +239,22 @@ export interface PackLeaveMessage {
 export interface NpcSnapshotMessage {
   type: 'npc_snapshot';
   tick: number;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   npcs: any[];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   players: any[];
+  edibleStates: Record<string, number>;
+}
+
+export interface PeerDisconnectMessage {
+  type: 'peer_disconnect';
+  peerId: string;
+  isDead: boolean;
+  posX: number;
+  posY: number;
+  posZ: number;
+  dinoId: string;
+  level: number;
 }
 
 export type PeerMeshMessage =
@@ -254,4 +273,5 @@ export type PeerMeshMessage =
   | PackKickMessage
   | PackMemberUpdateMessage
   | PackLeaveMessage
-  | NpcSnapshotMessage;
+  | NpcSnapshotMessage
+  | PeerDisconnectMessage;

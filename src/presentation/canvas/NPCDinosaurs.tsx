@@ -297,6 +297,9 @@ export const NPCDinosaurs: React.FC = () => {
     const pp = PlayerPositionRef;
 
     if (isClientMode) {
+      // Client: consome eventos do EventBus (ex: player_attacked) para PvP
+      NPCManager.consumeEventsFromBus(Infinity);
+
       // Client: interpola NPCs dos snapshots do host apenas durante interpolação ativa
       // Quando estável (sem novo snapshot), evita alocações e diffing desnecessários
       const interp = interpolatorRef.current;
@@ -363,6 +366,10 @@ export const NPCDinosaurs: React.FC = () => {
         });
       }
       NPCManager.setRemotePlayers(remotePlayers);
+      
+      // Clientes não rodam simulação autoritativa, mas precisam consumir eventos do EventBus 
+      // (ex: player_attacked) que chegam via EventReplicator.
+      NPCManager.consumeEventsFromBus(Infinity);
     }
 
     // Simulação autoritativa (host + single player + global mode)
@@ -396,7 +403,7 @@ export const NPCDinosaurs: React.FC = () => {
       const hostState = useAppStore.getState();
       const allNPCs = NPCManager.getActiveNPCs();
       
-      let allPlayers: any[] = [];
+      let allPlayers: import('../../infrastructure/network/messages').PlayerStateSnapshot[] = [];
       
       if (isPartyHost) {
         const allClients = peerSession.getHostClients();
@@ -499,7 +506,8 @@ export const NPCDinosaurs: React.FC = () => {
           PeerMesh.broadcastNpcSnapshot(
             NPCManager.getSimulationTick(),
             allNPCs,
-            allPlayers
+            allPlayers,
+            hostState.edibleStates
           );
         }
       }

@@ -3,7 +3,8 @@ export type GameEventType =
   | 'npc_died'
   | 'food_consumed'
   | 'player_chunk'
-  | 'npc_state_sync';
+  | 'npc_state_sync'
+  | 'player_attacked';
 
 export interface GameEvent {
   id: string;
@@ -44,6 +45,10 @@ class EventBusClass {
     this.events.push(fullEvent);
     this.onEventPushed?.(fullEvent);
     return fullEvent;
+  }
+
+  pushNetworkEvent(event: GameEvent): void {
+    this.events.push(event);
   }
 
   consume(maxTick: number): GameEvent[] {

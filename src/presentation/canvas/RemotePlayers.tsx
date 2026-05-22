@@ -71,7 +71,7 @@ const RemotePlayerInstance: React.FC<{ peerId: string; name: string; dinoId: str
 
     return { clonedScene: clone, mixer: m };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gltf.scene, gltf.animations, dinoId]);
+  }, [gltf.scene, gltf.animations, dinoId, JSON.stringify(colors)]);
 
   useEffect(() => {
     return () => {
@@ -79,8 +79,8 @@ const RemotePlayerInstance: React.FC<{ peerId: string; name: string; dinoId: str
     };
   }, [mixer]);
 
-  // Animação throttled: mixer atualiza a ~10fps (sincronizado com frequência do player_state)
-  const animThrottle = useRef(0);
+  // Animação: atualiza a 60fps
+  const prevActionRef = useRef<THREE.AnimationAction | null>(null);
 
   useFrame((_, delta) => {
     if (!groupRef.current) return;
@@ -111,9 +111,12 @@ const RemotePlayerInstance: React.FC<{ peerId: string; name: string; dinoId: str
     groupRef.current.visible = (dx * dx + dz * dz) <= RENDER_DISTANCE_SQ;
     if (!groupRef.current.visible) return;
 
-    const intent = s.animationIntent || 'Idle';
-    const intentChanged = intent !== prevAnimIntent.current;
-    prevAnimIntent.current = intent;
+    const fullIntent = s.animationIntent || 'Idle';
+    const intentParts = fullIntent.split('_');
+    const intent = intentParts[0];
+
+    const intentChanged = fullIntent !== prevAnimIntent.current;
+    prevAnimIntent.current = fullIntent;
 
     if (intentChanged) {
       const clip = findClip(gltf.animations ?? [], intent);
@@ -128,16 +131,16 @@ const RemotePlayerInstance: React.FC<{ peerId: string; name: string; dinoId: str
           action.setLoop(THREE.LoopRepeat, Infinity);
           action.clampWhenFinished = false;
         }
+        
+        if (prevActionRef.current && prevActionRef.current !== action) {
+          action.crossFadeFrom(prevActionRef.current, 0.2, true);
+        }
         action.play();
+        prevActionRef.current = action;
       }
     }
 
-    // Mixer update throttled: ~10fps para reduzir custo de animação esquelética
-    animThrottle.current += delta;
-    if (animThrottle.current >= 0.1) {
-      mixer.update(animThrottle.current);
-      animThrottle.current = 0;
-    }
+    mixer.update(delta);
   });
 
   const currentScale = getNPCScaleFactor(remoteLevel, stats);

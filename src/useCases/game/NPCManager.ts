@@ -1,5 +1,5 @@
 import type { NPCData } from '../../domain/models/NPCDinosaur';
-import { getNPCScaleFactor, calculateDamage } from '../../domain/models/NPCDinosaur';
+import { getNPCScaleFactor, calculateDamage, createNPC } from '../../domain/models/NPCDinosaur';
 import { NPCState } from '../../domain/models/NPCState';
 import { DINOSAUR_ROSTER, type Diet } from '../../domain/models/DinosaurStats';
 import type { IBehaviorStrategy } from '../../domain/interfaces/IBehaviorStrategy';
@@ -16,6 +16,7 @@ import { NPCFsmSystem } from './systems/NPCFsmSystem';
 import { NPCMovementSystem } from './systems/NPCMovementSystem';
 import { SeededRandomProvider } from '../../infrastructure/random/SeededRandomProvider';
 import { EventBus, type GameEvent } from '../../infrastructure/network/EventBus';
+import { PeerMesh } from '../../infrastructure/network/PeerMesh';
 import { ChunkInterestManager } from '../../infrastructure/network/ChunkInterestManager';
 import type { INPCManager } from '../../domain/interfaces/INPCManager';
 import { useAppStore } from '../../store/useAppStore';
@@ -142,6 +143,14 @@ class NPCManagerClass implements INPCManager {
         }
         break;
       }
+      case 'player_attacked': {
+        const targetPeerId = event.data.targetPeerId as string;
+        const damage = event.data.damage as number;
+        if (targetPeerId === PeerMesh.getOwnPeerId()) {
+          useAppStore.getState().takeDamage(damage);
+        }
+        break;
+      }
     }
   }
 
@@ -171,6 +180,19 @@ class NPCManagerClass implements INPCManager {
     this.lastPlayerDeadState = false;
     EventBus.clear();
     this.deterministicMode = false;
+  }
+
+  spawnPlayerCarcass(peerId: string, posX: number, posZ: number, dinoId: string, level: number): void {
+    const carcassId = `npc_${peerId}_carcass`;
+    const stats = dinoStatsMap[dinoId];
+    if (!stats) return;
+
+    const fakeDeadNPC = createNPC(carcassId, stats, level, posX, posZ, 'carcass_chunk');
+    fakeDeadNPC.health = 0;
+    fakeDeadNPC.state = NPCState.Dead;
+    
+    this.npcs.set(carcassId, fakeDeadNPC);
+    this.invalidateNpcCache();
   }
 
   private getStrategyForNPC(npc: NPCData): IBehaviorStrategy {
@@ -418,10 +440,10 @@ class NPCManagerClass implements INPCManager {
       this.hasPlayerSpawnPos = true;
     }
 
-    // Em modo determinístico, consome eventos do EventBus antes de simular
-    if (this.deterministicMode) {
-      this.consumeEventsFromBus(this.simulationTick);
-    }
+    // Consome eventos do EventBus antes de simular.
+    // Em modo determinístico, limita pelo tick atual; caso contrário, consome todos.
+    const maxConsumeTick = this.deterministicMode ? this.simulationTick : Infinity;
+    this.consumeEventsFromBus(maxConsumeTick);
 
     const playerChunkX = Math.floor(playerX / CHUNK_SIZE);
     const playerChunkZ = Math.floor(playerZ / CHUNK_SIZE);

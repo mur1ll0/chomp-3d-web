@@ -35,8 +35,8 @@ class EventReplicatorClass {
 
     this._processedEventIds.add(event.id);
 
-    // Insere no EventBus local para ser consumido no próximo tick de simulação
-    EventBus.push(event);
+    // Insere no EventBus local para ser consumido no próximo tick de simulação sem re-gerar ID
+    EventBus.pushNetworkEvent(event);
 
     // Podar cache de IDs processados a cada 1000 eventos
     if (this._processedEventIds.size > 1000) {
