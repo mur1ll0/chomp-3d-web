@@ -141,21 +141,13 @@ export const SessionSelectScreen: React.FC = () => {
 
         </div>
 
-        {/* Offline — opção inline compacta */}
+        {/* Offline */}
         <div className="mt-6">
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-slate-700/50" />
-            </div>
-            <div className="relative flex justify-center">
-              <span className="bg-slate-900 px-3 text-[10px] text-slate-500 uppercase tracking-wider">{t('session.orPlay')}</span>
-            </div>
-          </div>
           <button
             onClick={handleSingle}
-            className="mt-4 w-full flex items-center justify-center gap-3 bg-slate-800/50 hover:bg-slate-700/50 text-slate-300 hover:text-white font-bold py-3 px-6 rounded-xl transition-all active:scale-95 border border-slate-700/50 hover:border-green-500/30 group"
+            className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-green-600 to-emerald-700 hover:from-green-500 hover:to-emerald-600 text-white font-bold py-3 px-6 rounded-xl transition-all active:scale-95"
           >
-            <Play className="w-5 h-5 text-green-400 group-hover:scale-110 transition-transform" />
+            <Play className="w-4 h-4" />
             <span>{t('session.offline')}</span>
           </button>
         </div>

@@ -65,7 +65,7 @@ const translations: Record<Language, Record<string, string>> = {
     'char.mode.global': '\uD83C\uDF0D Global Mode',
     'char.p2p': 'Peer-to-Peer',
     'char.packCode': 'Pack Code (optional)',
-    'char.packCodePlaceholder': 'Ex: TRIC-3x5',
+    'char.packCodePlaceholder': 'Ex: X7K9',
     'char.packCodeDesc': 'Enter a code to join another player\'s pack, or leave empty to create your own.',
     'char.carnivore': 'Carnivore',
     'char.herbivore': 'Herbivore',
@@ -130,6 +130,7 @@ const translations: Record<Language, Record<string, string>> = {
     'network.connectedPlayers': 'Connected ({n})',
     'network.searching': 'Searching for players...',
     'network.waiting': 'Waiting for players...',
+    'network.createPack': 'Create Pack',
 
     'pack.invite': '{name} invited you to the pack!',
     'pack.joinRequest': '{name} wants to join your pack!',
@@ -204,7 +205,7 @@ const translations: Record<Language, Record<string, string>> = {
     'char.mode.global': '🌍 Modo Global',
     'char.p2p': 'Peer-to-Peer',
     'char.packCode': 'Código do Bando (opcional)',
-    'char.packCodePlaceholder': 'Ex: TRIC-3x5',
+    'char.packCodePlaceholder': 'Ex: X7K9',
     'char.packCodeDesc': 'Insira um código para entrar no bando de outro jogador, ou deixe vazio para criar o seu próprio.',
     'char.carnivore': 'Carnívoro',
     'char.herbivore': 'Herbívoro',
@@ -269,6 +270,7 @@ const translations: Record<Language, Record<string, string>> = {
     'network.connectedPlayers': 'Conectados ({n})',
     'network.searching': 'Buscando jogadores...',
     'network.waiting': 'Aguardando jogadores...',
+    'network.createPack': 'Criar Bando',
 
     'pack.invite': '{name} convidou você para o bando!',
     'pack.joinRequest': '{name} quer entrar no seu bando!',

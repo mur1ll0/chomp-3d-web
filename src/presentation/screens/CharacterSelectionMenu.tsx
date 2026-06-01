@@ -230,12 +230,10 @@ export const CharacterSelectionMenu: React.FC = () => {
 
     if (gameMode === 'global') {
       try {
-        let code = useAppStore.getState().packCode;
-        if (!code) {
-          code = PeerMesh.getSessionCode(); // Fallback if no code typed
+        const typedCode = useAppStore.getState().packCode;
+        if (typedCode) {
+          PeerMesh.setPackCode(typedCode);
         }
-        setPackCode(code);
-        PeerMesh.setPackCode(code);
 
         PeerMesh.setPlayerInfo(playerName, selectedDinoId, useAppStore.getState().dinoColors);
         await PeerMesh.startGlobal();
@@ -250,28 +248,28 @@ export const CharacterSelectionMenu: React.FC = () => {
       EventReplicator.enable();
     }
 
-    // Associa pack code: Party = session code, Global = código digitado ou auto-gerado
+    // Associa pack code: cria pack ou entra em pack existente pelo código digitado
     if (gameMode === 'global' || gameMode === 'party') {
-      let code: string;
-      if (gameMode === 'party') {
-        code = peerSession.getSessionCode();
-        setPackCode(code);
-        // Party mode pack is handled inherently by PeerSession's pack logic
-      } else {
-        code = useAppStore.getState().packCode || PeerMesh.getSessionCode();
+      const typedCode = useAppStore.getState().packCode;
 
-        // Aguarda mais tempo para conexões p2p (handshakes) completarem
-        await new Promise(r => setTimeout(r, 3000));
-        if (!PeerMesh.getPackMembers().length) {
-          // Só cria se nenhum outro peer conectado já possuir o mesmo packCode
-          const peers = PeerMesh.getConnectedPeers();
-          const hasLeader = peers.some(p => p.packCode === code);
-          if (!hasLeader) {
-            PeerMesh.createPack();
-          } else {
-            // Se tem líder mas não entrou no pack automaticamente (provavelmente por lag de WebRTC), tenta forçar o join
-            const leader = peers.find(p => p.packCode === code);
+      await new Promise(r => setTimeout(r, 3000));
+      if (!PeerMesh.getPackMembers().length) {
+        const peers = PeerMesh.getConnectedPeers();
+        if (typedCode) {
+          const hasLeader = peers.some(p => p.packCode === typedCode);
+          if (hasLeader) {
+            const leader = peers.find(p => p.packCode === typedCode);
             if (leader) PeerMesh.requestJoinPack(leader.peerId);
+          } else {
+            PeerMesh.setPackCode(typedCode);
+            PeerMesh.createPack();
+          }
+        } else {
+          // Global: always auto-create. Party: only host auto-creates.
+          const shouldCreate = gameMode === 'global' || useAppStore.getState().onlineRole === 'host';
+          if (shouldCreate) {
+            PeerMesh.createPack();
+            setPackCode(useAppStore.getState().packCode);
           }
         }
       }
@@ -334,7 +332,7 @@ export const CharacterSelectionMenu: React.FC = () => {
             </div>
           )}
 
-          {gameMode === 'global' && (
+          {(gameMode === 'global' || gameMode === 'party') && (
             <div className="space-y-2">
               <label className="block text-sm font-medium text-slate-400">{t('char.packCode')}</label>
               <input

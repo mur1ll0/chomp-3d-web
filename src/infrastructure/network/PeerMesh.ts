@@ -48,7 +48,7 @@ const PEER_TIMEOUT_MS = 15000;
 const PLAYER_STATE_THROTTLE_MS = 100;
 const GLOBAL_ROOM_CODE = 'chomp3d-global-v1';
 
-function generateSessionCode(): string {
+function generatePackCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code = '';
   for (let i = 0; i < 4; i++) {
@@ -357,7 +357,7 @@ class PeerMeshClass {
 
   createPack(): void {
     if (!this._packCode) {
-      this._packCode = generateSessionCode();
+      this._packCode = generatePackCode();
     }
     this._packMembers = [{ peerId: this._ownPeerId, playerName: this._playerName, dinoId: this._dinoId }];
     this._isPackLeader = true;
@@ -472,9 +472,11 @@ class PeerMeshClass {
   private _clearPack(): void {
     this._packMembers = [];
     this._isPackLeader = false;
+    this._packCode = '';
     useAppStore.getState().setPackRole('solo');
     useAppStore.getState().setPackMembers([]);
     useAppStore.getState().setPackLeaderPeerId(null);
+    useAppStore.getState().setPackCode('');
   }
 
   // ── Métodos privados ──

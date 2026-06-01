@@ -18,7 +18,6 @@ function stopAndRelease(e: React.PointerEvent | React.MouseEvent): void {
 export const NetworkPanel: React.FC = () => {
   const t = useT();
   const gameMode = useAppStore(s => s.gameMode);
-  const sessionCode = useAppStore(s => s.sessionCode);
   const packCode = useAppStore(s => s.packCode);
   const playerName = useAppStore(s => s.playerName);
   const connectionStatus = useAppStore(s => s.connectionStatus);
@@ -26,7 +25,6 @@ export const NetworkPanel: React.FC = () => {
   const packMembers = useAppStore(s => s.packMembers);
 
   const [expanded, setExpanded] = useState(false);
-  const [copiedCode, setCopiedCode] = useState(false);
   const [copiedPack, setCopiedPack] = useState(false);
 
   if (gameMode === 'single' || gameMode === null) return null;
@@ -35,23 +33,12 @@ export const NetworkPanel: React.FC = () => {
   const totalPlayers = 1 + connectedPeers.length;
 
   const isGlobal = gameMode === 'global';
-  const isParty = gameMode === 'party';
   const isLeader = packRole === 'leading';
   const hasPack = packRole !== 'solo';
 
   const otherPeers = connectedPeers.filter(
     p => !packMembers.find(m => m.peerId === p.peerId)
   );
-
-  const handleCopyCode = () => {
-    const code = isParty ? sessionCode : '';
-    if (code) {
-      navigator.clipboard.writeText(code).then(() => {
-        setCopiedCode(true);
-        setTimeout(() => setCopiedCode(false), 2000);
-      }).catch(() => {});
-    }
-  };
 
   const handleCopyPackCode = () => {
     if (packCode) {
@@ -111,32 +98,6 @@ export const NetworkPanel: React.FC = () => {
              connectionStatus === 'connecting' ? t('network.connecting') : t('network.disconnected')}
           </div>
 
-          {/* Party Code */}
-          {isParty && sessionCode && (
-            <div className="bg-slate-800/80 border border-orange-500/30 rounded-lg p-3 text-center">
-              <div className="text-[10px] text-slate-400 uppercase tracking-wider mb-1">{t('network.partyCode')}</div>
-              <div className="text-2xl font-black text-orange-400 tracking-[0.3em]">{sessionCode}</div>
-              <button
-                onClick={(e) => { stopAndRelease(e); handleCopyCode(); }}
-                onPointerDown={stop}
-                onMouseDown={stop}
-                className="mt-2 flex items-center justify-center gap-1 w-full bg-slate-700 hover:bg-slate-600 rounded-md py-1.5 text-xs text-white transition-all"
-              >
-                {copiedCode ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
-                {copiedCode ? t('network.copied') : t('network.copy')}
-              </button>
-            </div>
-          )}
-
-          {/* Global Info */}
-          {isGlobal && (
-            <div className="bg-slate-800/80 border border-blue-500/30 rounded-lg p-3 text-center">
-              <div className="text-[10px] text-slate-400 uppercase tracking-wider mb-1">{t('network.globalWorld')}</div>
-              <div className="text-lg font-bold text-blue-400">{t('char.p2p')}</div>
-              <div className="text-xs text-slate-500">{t('network.playersInArea', { n: totalPlayers })}</div>
-            </div>
-          )}
-
           {/* Pack Code */}
           {packCode && (
             <div className="bg-slate-800/80 border border-green-500/30 rounded-lg p-3 text-center">
@@ -154,7 +115,7 @@ export const NetworkPanel: React.FC = () => {
             </div>
           )}
 
-          {/* Pack / Bando Section */}
+          {/* My Pack Section */}
           {hasPack && (
             <div className="border-t border-slate-700 pt-2">
               <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1">
@@ -241,6 +202,21 @@ export const NetworkPanel: React.FC = () => {
             </div>
           )}
 
+          {/* Create Pack Button — shown when no pack */}
+          {!hasPack && (
+            <div className="border-t border-slate-700 pt-2">
+              <button
+                onClick={(e) => { stopAndRelease(e); PeerMesh.createPack(); }}
+                onPointerDown={stop}
+                onMouseDown={stop}
+                className="w-full flex items-center justify-center gap-2 bg-amber-600/20 hover:bg-amber-600/40 border border-amber-500/30 rounded-md py-2 text-amber-400 text-xs font-bold transition-all"
+              >
+                <Shield className="w-3 h-3" />
+                {t('network.createPack')}
+              </button>
+            </div>
+          )}
+
           {/* Player List */}
           <div className="border-t border-slate-700 pt-2">
             <div className="text-[10px] text-slate-500 uppercase tracking-wider">
@@ -260,7 +236,7 @@ export const NetworkPanel: React.FC = () => {
               ))}
               {connectedPeers.length === 0 && (
                 <div className="text-xs text-slate-500 text-center py-2">
-                  {isGlobal ? t('network.searching') : t('network.waiting')}
+                  {isGlobal ? `${t('network.searching')} (${totalPlayers})` : t('network.waiting')}
                 </div>
               )}
             </div>
