@@ -71,7 +71,7 @@ export const SettingsMenu: React.FC<{ inGame?: boolean }> = ({ inGame }) => {
 
   return (
     <div
-      className={`flex items-center justify-center min-h-screen ${inGame ? 'bg-transparent' : 'bg-slate-900 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-800 to-slate-950'} text-slate-200 w-full`}
+      className={`flex items-start sm:items-center justify-center min-h-screen ${inGame ? 'bg-transparent' : 'bg-slate-900 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-800 to-slate-950'} text-slate-200 w-full overflow-y-auto`}
       onMouseDown={(e) => {
         if (!rebindingAction) return;
         const target = e.target as Node;
@@ -80,7 +80,7 @@ export const SettingsMenu: React.FC<{ inGame?: boolean }> = ({ inGame }) => {
         }
       }}
     >
-      <div ref={panelRef} className="max-w-2xl w-full p-8 bg-slate-800/90 backdrop-blur-md rounded-2xl shadow-2xl border border-slate-700/50 flex flex-col h-[600px]">
+      <div ref={panelRef} className="max-w-2xl w-full p-4 sm:p-6 md:p-8 bg-slate-800/90 backdrop-blur-md rounded-2xl shadow-2xl border border-slate-700/50 flex flex-col max-h-[85vh] overflow-y-auto">
         
         <div className="flex items-center justify-between mb-8 border-b border-slate-700 pb-4">
           <div className="flex items-center">

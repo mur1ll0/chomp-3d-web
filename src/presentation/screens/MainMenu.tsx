@@ -34,8 +34,8 @@ export const MainMenu: React.FC = () => {
   const t = useT();
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-slate-900 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-800 to-slate-950">
-      <div className="max-w-md w-full p-8 bg-slate-800/50 backdrop-blur-md rounded-2xl shadow-2xl border border-slate-700/50 transform transition-all">
+    <div className="flex items-start sm:items-center justify-center min-h-screen bg-slate-900 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-800 to-slate-950 overflow-y-auto">
+      <div className="max-w-md w-full p-4 sm:p-6 md:p-8 bg-slate-800/50 backdrop-blur-md rounded-2xl shadow-2xl border border-slate-700/50 transform transition-all">
         <div className="text-center mb-10">
           <h1 className="text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-orange-400 to-red-500 mb-2 drop-shadow-lg">
             {t('menu.title')}

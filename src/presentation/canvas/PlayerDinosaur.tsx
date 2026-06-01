@@ -11,6 +11,7 @@ import { useKeyboard } from '../../useCases/game/useKeyboard';
 import { MapGenerator, getWaterValue, WATER_THRESHOLD } from '../../infrastructure/generation/MapGenerator';
 import type { ChunkData, MapEdible } from '../../infrastructure/generation/MapGenerator';
 import { NPCManager } from '../../useCases/game/NPCManager';
+import { touchInput, isMobileDevice } from '../../useCases/game/TouchInputState';
 import { playerAttackNPCWithEvent } from '../../useCases/game/CombatSystem';
 import { PlayerPositionRef } from '../../useCases/game/PlayerPositionRef';
 import { calculateFinalScale, calculateInteractRadius, calculateBiteDamage, calculatePercentageDamage, calculateCarcassNutritionByLevel, isInInteractionRange } from '../../domain/services/DinosaurService';
@@ -29,6 +30,7 @@ const _moveDir = new THREE.Vector3();
 const _targetPos = new THREE.Vector3();
 const _forwardCam = new THREE.Vector3();
 const _tempQuatMove = new THREE.Quaternion();
+const _cameraEuler = new THREE.Euler(0, 0, 0, 'YXZ');
 
 type DinoDebugInfo = {
   speed: number;
@@ -130,6 +132,9 @@ export const PlayerDinosaur: React.FC = () => {
 
   const { names, playAnimation } = useDinosaurAnimations(gltf, playerModel);
   const keys = useKeyboard();
+  const isMobile = isMobileDevice();
+  const cameraYaw = useRef(Math.PI);
+  const cameraPitch = useRef(-0.15);
   const { camera } = useThree();
   const playerRef = useRef<THREE.Group>(null);
 
@@ -419,8 +424,8 @@ export const PlayerDinosaur: React.FC = () => {
       inputSyncCounter.current = 0;
       const appState = useAppStore.getState();
       peerSession.sendInput({
-        moveX: isMoving ? (keys[controlBindings.moveForward] ? 1 : keys[controlBindings.moveBackward] ? -1 : 0) : 0,
-        moveZ: 0,
+        moveX: isMobile ? touchInput.moveX : (isMoving ? (keys[controlBindings.moveForward] ? 1 : keys[controlBindings.moveBackward] ? -1 : 0) : 0),
+        moveZ: isMobile ? touchInput.moveZ : 0,
         isRunning: isSprinting,
         attacking: isAttacking,
         eating: isEating,
@@ -534,8 +539,24 @@ export const PlayerDinosaur: React.FC = () => {
       return;
     }
 
+    // Mobile: consume acoes de toque
+    if (isMobile) {
+      if (touchInput.attack && !isActionLocked.current && isGrounded.current) {
+        touchInput.attack = false;
+        triggerAttackAction();
+      }
+      if (touchInput.jump && isGrounded.current && !inWater) {
+        touchInput.jump = false;
+        yVelocity.current = 15.5 + (2.0 / Math.sqrt(finalScale));
+        isGrounded.current = false;
+        playAnimation('Jump', false);
+      }
+    }
+
     // Acionar Comer pelo teclado (apenas se houver comida próxima)
-    if (keys[controlBindings.eat] && isGrounded.current && useAppStore.getState().interactableEdibleId) {
+    const wantsEat = isMobile ? touchInput.eat : keys[controlBindings.eat];
+    if (wantsEat && isGrounded.current && useAppStore.getState().interactableEdibleId) {
+      if (isMobile) touchInput.eat = false;
       triggerEatAction();
       return;
     }
@@ -551,7 +572,8 @@ export const PlayerDinosaur: React.FC = () => {
     }
 
     // Só pode correr se tiver stamina e não estiver na trava de exaustão
-    const isRunning = keys[controlBindings.sprint] && currentStamina > 0 && !useAppStore.getState().isExhausted;
+    const staminaOk = currentStamina > 0 && !useAppStore.getState().isExhausted;
+    let isRunning = !isMobile && keys[controlBindings.sprint] && staminaOk;
 
     // Penalidade de velocidade para filhotes e jovens (atinge 100% no nível 20, adulto)
     // Começa em 0.5 (50%) e sobe 0.5 (até 100%) ao longo de 19 níveis
@@ -564,7 +586,16 @@ export const PlayerDinosaur: React.FC = () => {
     const moveSpeed = baseCurrentSpeed * waterMultiplier * levelSpeedModifier;
     const turnSpeed = 10.0;
 
-
+    // Mobile: atualiza rotacao da camera por touch drag
+    if (isMobile) {
+      const SENS = 0.004;
+      cameraYaw.current -= touchInput.cameraYaw * SENS;
+      cameraPitch.current = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, cameraPitch.current - touchInput.cameraPitch * SENS));
+      touchInput.cameraYaw = 0;
+      touchInput.cameraPitch = 0;
+      _cameraEuler.set(cameraPitch.current, cameraYaw.current, 0);
+      camera.quaternion.setFromEuler(_cameraEuler);
+    }
 
     // Vetores da câmera (reutilizados do escopo de módulo)
     camera.getWorldDirection(_forward);
@@ -578,7 +609,16 @@ export const PlayerDinosaur: React.FC = () => {
     let moving = false;
 
     // Bloqueia movimento se estiver executando uma ação (Comer/Atacar)
-    if (!isActing) {
+    if (isMobile) {
+      const mx = touchInput.moveX;
+      const mz = touchInput.moveZ;
+      if (Math.abs(mx) > 0.1 || Math.abs(mz) > 0.1) {
+        _moveDir.addScaledVector(_right, mx);
+        _moveDir.addScaledVector(_forward, mz);
+        moving = true;
+        isRunning = Math.sqrt(mx * mx + mz * mz) > 0.7 && staminaOk;
+      }
+    } else if (!isActing) {
       if (keys[controlBindings.moveForward]) { _moveDir.add(_forward); moving = true; }
       if (keys[controlBindings.moveBackward]) { _moveDir.sub(_forward); moving = true; }
       if (keys[controlBindings.moveLeft]) { _moveDir.sub(_right); moving = true; }
@@ -888,7 +928,7 @@ export const PlayerDinosaur: React.FC = () => {
 
   return (
     <>
-      {!isDead && <PointerLockControls enabled={!isActing} />}
+      {!isDead && !isMobile && <PointerLockControls enabled={!isActing} />}
       <group ref={playerRef} position={initialPosition} visible={!isDead}>
         <group scale={[finalScale, finalScale, finalScale]}>
           <primitive object={playerModel} />

@@ -17,3 +17,17 @@ html, body, #root {
   color: white;
   font-family: 'Inter', system-ui, Avenir, Helvetica, Arial, sans-serif;
 }
+
+/* Mobile controls landscape optimization */
+@media (max-height: 500px) {
+  .mobile-joystick {
+    width: 100px !important;
+    height: 100px !important;
+    bottom: 60px !important;
+  }
+  .mobile-btn {
+    width: 44px !important;
+    height: 44px !important;
+    font-size: 9px !important;
+  }
+}

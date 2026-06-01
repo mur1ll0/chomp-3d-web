@@ -287,19 +287,19 @@ export const CharacterSelectionMenu: React.FC = () => {
   };
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-slate-900 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-800 to-slate-950 text-slate-200 p-4">
-      <div className="max-w-6xl w-full p-8 bg-slate-800/80 backdrop-blur-md rounded-2xl shadow-2xl border border-slate-700/50 flex flex-col md:flex-row gap-8 min-h-[600px]">
+    <div className="flex items-start sm:items-center justify-center min-h-screen bg-slate-900 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-800 to-slate-950 text-slate-200 p-4 overflow-y-auto">
+      <div className="max-w-6xl w-full p-4 sm:p-6 md:p-8 bg-slate-800/80 backdrop-blur-md rounded-2xl shadow-2xl border border-slate-700/50 flex flex-col md:flex-row gap-4 sm:gap-6 md:gap-8 max-h-[90vh] overflow-y-auto">
         
         {/* Left Column: Selection */}
-        <div className="flex-1 flex flex-col gap-6">
-          <div className="flex items-center gap-4">
+        <div className="flex-1 flex flex-col gap-3 sm:gap-4 md:gap-6">
+          <div className="flex items-center gap-3 sm:gap-4">
             <button 
               onClick={handleBack}
-              className="p-2 hover:bg-slate-700 rounded-full transition-colors"
+              className="p-1.5 sm:p-2 hover:bg-slate-700 rounded-full transition-colors"
             >
-              <ArrowLeft className="w-6 h-6 text-slate-300" />
+              <ArrowLeft className="w-5 h-5 sm:w-6 sm:h-6 text-slate-300" />
             </button>
-            <h2 className="text-3xl font-bold text-white">{t('char.title')}</h2>
+            <h2 className="text-xl sm:text-2xl md:text-3xl font-bold text-white">{t('char.title')}</h2>
           </div>
 
           {(gameMode === 'global' || gameMode === 'party') && (
@@ -403,15 +403,15 @@ export const CharacterSelectionMenu: React.FC = () => {
         </div>
 
         {/* Right Column: Stats & Confirmation */}
-        <div className="w-full lg:w-[350px] bg-slate-900/50 rounded-xl p-6 border border-slate-700/50 flex flex-col">
-          <div className="text-center mb-6">
-            <h3 className="text-2xl font-black text-white tracking-wide">{selectedDino.name}</h3>
+        <div className="w-full lg:w-[350px] bg-slate-900/50 rounded-xl p-3 sm:p-4 md:p-6 border border-slate-700/50 flex flex-col">
+          <div className="text-center mb-3 sm:mb-4 md:mb-6">
+            <h3 className="text-lg sm:text-xl md:text-2xl font-black text-white tracking-wide">{selectedDino.name}</h3>
             <span className={`text-xs uppercase font-bold px-2 py-1 rounded-full ${selectedDino.diet === 'Carnivore' ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'}`}>
               {selectedDino.diet}
             </span>
           </div>
 
-          <div className="space-y-4 mb-6">
+          <div className="space-y-2 sm:space-y-3 md:space-y-4 mb-4 sm:mb-6">
             <div>
               <div className="flex justify-between text-sm mb-1">
                 <span className="text-slate-400">{t('char.walkSpeed')}</span>
@@ -453,7 +453,7 @@ export const CharacterSelectionMenu: React.FC = () => {
           <div className="mt-auto">
             <button 
               onClick={handleStartGame}
-              className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-400 hover:to-red-500 text-white font-bold py-4 px-6 rounded-xl shadow-lg transition-all active:scale-95"
+              className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-400 hover:to-red-500 text-white font-bold py-3 sm:py-4 px-4 sm:px-6 rounded-xl shadow-lg transition-all active:scale-95"
             >
               <Play className="w-5 h-5 fill-current" />
               {t('char.start')}

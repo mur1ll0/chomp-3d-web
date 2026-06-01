@@ -36,8 +36,8 @@ export const SessionSelectScreen: React.FC = () => {
 
   if (partyMode === 'join') {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-slate-900 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-800 to-slate-950">
-        <div className="max-w-md w-full p-8 bg-slate-800/50 backdrop-blur-md rounded-2xl shadow-2xl border border-slate-700/50">
+      <div className="flex items-start sm:items-center justify-center min-h-screen bg-slate-900 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-800 to-slate-950 overflow-y-auto">
+        <div className="max-w-md w-full p-4 sm:p-6 md:p-8 bg-slate-800/50 backdrop-blur-md rounded-2xl shadow-2xl border border-slate-700/50 max-h-[90vh] overflow-y-auto my-4 sm:my-auto">
           <div className="flex items-center gap-4 mb-8">
             <button onClick={() => setPartyMode('choose')} className="p-2 hover:bg-slate-700 rounded-full transition-colors">
               <ArrowLeft className="w-6 h-6 text-slate-300" />
@@ -72,8 +72,8 @@ export const SessionSelectScreen: React.FC = () => {
   }
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-slate-900 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-800 to-slate-950 p-4">
-      <div className="max-w-2xl w-full">
+    <div className="flex items-start sm:items-center justify-center min-h-screen bg-slate-900 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-800 to-slate-950 p-4 overflow-y-auto">
+      <div className="max-w-2xl w-full my-auto">
         <div className="flex items-center gap-4 mb-6">
           <button onClick={() => { setGameMode(null); setScreen('menu'); }} className="p-2 hover:bg-slate-700 rounded-full transition-colors">
             <ArrowLeft className="w-6 h-6 text-slate-300" />

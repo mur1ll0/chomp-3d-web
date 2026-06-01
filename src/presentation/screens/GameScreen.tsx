@@ -19,6 +19,8 @@ import { RemotePlayers } from '../canvas/RemotePlayers';
 import { NetworkPanel } from './NetworkPanel';
 import { PackInviteToast } from './PackInviteToast';
 import { showPackInvite, showPackJoinRequest, showPackKicked, showPackInfo } from './packToast';
+import { useIsMobile } from '../hooks/useIsMobile';
+import { MobileControls } from '../canvas/mobile/MobileControls';
 
 // Sub-componente para Tela de Morte
 const DeathScreen: React.FC<{ onLeave: () => Promise<void> | void }> = ({ onLeave }) => {
@@ -112,7 +114,7 @@ const PlayerHUD: React.FC = () => {
   const t = useT();
 
   return (
-    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-80 md:w-[400px] pointer-events-none flex flex-col gap-2 z-20">
+    <div className="absolute bottom-28 sm:bottom-6 left-1/2 -translate-x-1/2 w-64 sm:w-80 md:w-[400px] pointer-events-none flex flex-col gap-1 sm:gap-2 z-20">
       <div className="text-white text-center font-bold drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)] text-lg">
         {t('game.hud.level', { n: level })} <span className="text-sm font-normal text-slate-300">
           {level < 10 ? t('game.hud.cub') : level < 20 ? t('game.hud.juvenile') : t('game.hud.adult')}
@@ -164,6 +166,7 @@ export const GameScreen: React.FC = () => {
   const playerChunkPos = useAppStore(s => s.playerChunkPos);
   const isDead = useAppStore(s => s.isDead);
   const sessionCode = useAppStore(s => s.sessionCode);
+  const isMobile = useIsMobile();
   
   const isOnline = gameMode === 'party' || gameMode === 'global';
 
@@ -226,42 +229,42 @@ export const GameScreen: React.FC = () => {
         </div>
       )}
 
-      <div className="absolute top-0 left-0 w-full p-4 z-10 flex justify-between items-start pointer-events-none">
-        <div className="flex gap-2">
+      <div className="absolute top-0 left-0 w-full p-2 sm:p-4 z-10 flex justify-between items-start pointer-events-none">
+        <div className="flex gap-1 sm:gap-2">
           <button
             onClick={(e) => { e.stopPropagation(); handleLeaveGame(); }}
             onPointerDown={(e) => e.stopPropagation()}
-            className="pointer-events-auto flex items-center gap-2 bg-slate-900/60 hover:bg-slate-800/80 backdrop-blur text-white px-4 py-2 rounded-lg border border-slate-700 transition-all"
+            className="pointer-events-auto flex items-center gap-1 sm:gap-2 bg-slate-900/60 hover:bg-slate-800/80 backdrop-blur text-white px-2 sm:px-4 py-1.5 sm:py-2 rounded-lg border border-slate-700 transition-all text-xs sm:text-sm"
           >
-            <ArrowLeft className="w-4 h-4" />
+            <ArrowLeft className="w-3 h-3 sm:w-4 sm:h-4" />
             {t('game.buttons.leave')}
           </button>
           <button
             onClick={(e) => { e.stopPropagation(); toggleSettingsInGame(); }}
             onPointerDown={(e) => e.stopPropagation()}
-            className="pointer-events-auto flex items-center gap-2 bg-slate-900/60 hover:bg-slate-800/80 backdrop-blur text-white px-4 py-2 rounded-lg border border-slate-700 transition-all"
+            className="pointer-events-auto flex items-center gap-1 sm:gap-2 bg-slate-900/60 hover:bg-slate-800/80 backdrop-blur text-white px-2 sm:px-4 py-1.5 sm:py-2 rounded-lg border border-slate-700 transition-all text-xs sm:text-sm"
           >
-            <Settings className="w-4 h-4" />
+            <Settings className="w-3 h-3 sm:w-4 sm:h-4" />
             {t('game.buttons.config')}
           </button>
         </div>
 
-        <div className="pointer-events-auto bg-slate-900/60 backdrop-blur text-white px-6 py-3 rounded-lg border border-slate-700 shadow-lg text-center flex flex-col items-center">
-          <div className="text-lg text-slate-400 uppercase tracking-wider mb-1">
+        <div className="pointer-events-auto bg-slate-900/60 backdrop-blur text-white px-3 sm:px-6 py-1.5 sm:py-3 rounded-lg border border-slate-700 shadow-lg text-center flex flex-col items-center">
+          <div className="text-xs sm:text-lg text-slate-400 uppercase tracking-wider mb-0.5 sm:mb-1">
             {isOnline ? playerName : t('game.singlePlayer')}
           </div>
-          <div className="font-bold text-orange-400 flex items-center gap-2">
-            <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500 animate-pulse' : 'bg-slate-500'}`}></span>
+          <div className="font-bold text-orange-400 flex items-center gap-1 sm:gap-2 text-xs sm:text-base">
+            <span className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full ${isOnline ? 'bg-green-500 animate-pulse' : 'bg-slate-500'}`}></span>
             {selectedDinoId}
           </div>
-          <div className="flex items-center gap-2 mt-1">
+          <div className="flex items-center gap-1 sm:gap-2 mt-0.5 sm:mt-1">
             <PositionDisplay />
           </div>
           {isOnline && (
-            <div className="text-lg mt-1 flex items-center justify-center gap-2 bg-slate-800/40 rounded-md px-2 py-0.5">
-              <span className="text-slate-300 font-medium">{t('game.session')}</span>
-              <span className="font-mono text-orange-400 font-bold tracking-wider">{sessionCode}</span>
-              <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+            <div className="text-xs sm:text-lg mt-0.5 sm:mt-1 flex items-center justify-center gap-1 sm:gap-2 bg-slate-800/40 rounded-md px-1.5 sm:px-2 py-0.5">
+              <span className="text-slate-300 font-medium text-[10px] sm:text-sm">{t('game.session')}</span>
+              <span className="font-mono text-orange-400 font-bold tracking-wider text-[10px] sm:text-sm">{sessionCode}</span>
+              <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-green-500 animate-pulse" />
             </div>
           )}
         </div>
@@ -272,6 +275,7 @@ export const GameScreen: React.FC = () => {
       {!isDead && <PlayerHUD />}
       <NetworkPanel />
       <PackInviteToast />
+      {isMobile && !isDead && <MobileControls />}
       {!isDead && <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-1.5 h-1.5 bg-white/50 rounded-full z-10 pointer-events-none" />}
 
       <Canvas shadows={{ type: THREE.PCFShadowMap }}>
