@@ -79,8 +79,10 @@ class PeerMeshClass {
   private _lastPlayerStateSend = 0;
   private _onPeerListChanged: ((peers: PeerInfo[]) => void) | null = null;
   private _isFirstPeer = false;
+  private _isPaused = false;
   private _remotePlayerStates = new Map<string, PlayerStateMessage>();
   private _carcassSpawned = new Set<string>();
+  private _reconnectingTo = new Set<string>();
 
   // Pack state
   private _packMembers: PackMemberEntry[] = [];
@@ -94,8 +96,9 @@ class PeerMeshClass {
 
   // ── Lifecycle ──
 
-  async startParty(sessionCode?: string): Promise<void> {
+  async startParty(sessionCode: string, isHost: boolean): Promise<void> {
     this._mode = 'party';
+    this._sessionCode = sessionCode;
 
     // Reforça dados do jogador lendo do store (segurança caso setPlayerInfo
     // tenha sido chamado antes das cores serem inicializadas na UI).
@@ -104,20 +107,21 @@ class PeerMeshClass {
     if (st.selectedDinoId) this._dinoId = st.selectedDinoId;
     if (Object.keys(st.dinoColors).length > 0) this._colors = { ...st.dinoColors };
 
-    if (!sessionCode) {
-      this._isFirstPeer = true;
-      this._sessionCode = generateSessionCode();
-      await this._createPeer(this._sessionCode);
+    // PeerSession.startHost() já cria um PeerJS peer com sessionCode como ID.
+    // Para evitar conflito, o PeerMesh do host usa prefixo 'mesh_'.
+    const hostPeerId = `mesh_${sessionCode}`;
+
+    this._isFirstPeer = isHost;
+    if (isHost) {
+      await this._createPeer(hostPeerId);
     } else {
-      this._isFirstPeer = false;
-      this._sessionCode = sessionCode;
       await this._createPeer(generatePeerId());
     }
 
     EventBus.setOwnPeerId(this._ownPeerId);
 
     if (!this._isFirstPeer) {
-      await this._connectToHostPeer(this._sessionCode);
+      await this._connectToHostPeer(hostPeerId);
     }
 
     EventReplicator.enable();
@@ -198,9 +202,49 @@ class PeerMeshClass {
     EventBus.setOwnPeerId('local');
     this._onPeerListChanged = null;
     this._isFirstPeer = false;
+    this._isPaused = false;
     this._remotePlayerStates.clear();
     this._carcassSpawned.clear();
+    this._reconnectingTo.clear();
     this._clearPack();
+  }
+
+  /**
+   * Pausa o mesh sem destruir conexões. Útil quando o jogador sai da
+   * partida mas pode voltar (ex.: morte → character-select).
+   */
+  pause(): void {
+    if (this._isPaused) return;
+    this._isPaused = true;
+    EventReplicator.disable();
+  }
+
+  /**
+   * Retoma um mesh pausado, reabilitando heartbeat e replicação de eventos.
+   */
+  resume(): void {
+    if (!this._isPaused) return;
+    this._isPaused = false;
+    EventReplicator.reset();
+    EventReplicator.enable();
+    EventBus.clear();
+    if (!this._heartbeatTimer) {
+      this._startHeartbeat();
+    }
+    useAppStore.getState().setConnectionStatus('connected');
+  }
+
+  /**
+   * Reinicia o estado interno para uma nova sessão, mantendo a mesma
+   * conexão PeerJS ativa. Útil quando o jogador recria o personagem
+   * na tela de seleção sem fechar a conexão P2P.
+   */
+  resetGameState(): void {
+    // Limpa estados internos para reentrada, mas NÃO remove a carcaça
+    // (ela deve persistir no mapa para outros jogadores e para o próprio
+    // jogador quando voltar à partida).
+    this._carcassSpawned.clear();
+    this._remotePlayerStates.clear();
   }
 
   // ── Configuração ──
@@ -465,6 +509,8 @@ class PeerMeshClass {
   }
 
   private async _connectToHostPeer(hostPeerId: string): Promise<void> {
+    this._reconnectingTo.add(hostPeerId);
+    const cleanup = () => this._reconnectingTo.delete(hostPeerId);
     return new Promise<void>((resolve, reject) => {
       const conn = this._ownPeer!.connect(hostPeerId, { reliable: true });
 
@@ -502,7 +548,7 @@ class PeerMeshClass {
         clearTimeout(timeout);
         reject(err);
       });
-    });
+    }).finally(cleanup);
   }
 
   private _getCurrentChunk(): { x: number; z: number } {
@@ -617,14 +663,17 @@ class PeerMeshClass {
   }
 
   private _handlePeerDisconnect(msg: PeerDisconnectMessage): void {
-    // Se o peer morreu, gerar carcaça comestível no local
-    if (msg.isDead) {
-      NPCManager.spawnPlayerCarcass(msg.peerId, msg.posX, msg.posZ, msg.dinoId || 't-rex', msg.level || 1);
-      const carcassId = `npc_${msg.peerId}_carcass`;
-      useAppStore.getState().damageEdible(carcassId, 0); // registra como 100%
+    // Se o peer morreu E ainda não existe carcaça no NPCManager, gerar carcaça comestível.
+    // Usa NPCManager.getNPC (não _carcassSpawned) para verificar existência real.
+    const carcassId = `npc_${msg.peerId}_carcass`;
+    if (msg.isDead && !NPCManager.getNPC(carcassId)) {
+      const info = this._peerInfo.get(msg.peerId);
+      NPCManager.spawnPlayerCarcass(msg.peerId, msg.posX, msg.posZ, msg.dinoId || 't-rex', msg.level || 1, info?.colors);
+      useAppStore.getState().damageEdible(carcassId, 0);
     }
 
-    // Remove peer imediatamente (sem esperar timeout)
+    // Remove peer (também limpa _carcassSpawned via _onPeerDisconnected)
+    // para que reconexão com mesmo peerId não dispare falsa ressurreição.
     this._onPeerDisconnected(msg.peerId);
   }
 
@@ -728,6 +777,7 @@ class PeerMeshClass {
     if (isNew) {
       this._notifyPeerListChanged();
     }
+    this._bumpRemoteStateVersion();
 
     // Fallback PvP damage: se esta mensagem carrega dano para nós, aplica
     if (msg.damageToPeer && msg.damageToPeerId === this._ownPeerId) {
@@ -737,23 +787,42 @@ class PeerMeshClass {
       }
     }
 
+    // Ressurreição: peer que estava morto voltou à vida — remove carcaça, re-adiciona visual.
+    // Só dispara se _carcassSpawned contém o peerId (marcador de sessão ativa).
+    // _carcassSpawned é limpo em _onPeerDisconnected, então reconexão após
+    // desconexão NÃO dispara falsa ressurreição.
+    const carcassId = `npc_${msg.peerId}_carcass`;
+    if (!msg.isDead && this._carcassSpawned.has(msg.peerId)) {
+      this._carcassSpawned.delete(msg.peerId);
+      NPCManager.removeCarcass(carcassId);
+      useAppStore.getState().removeEdible(carcassId);
+      return;
+    }
+
     // Quando um peer remoto morre: spawna carcaça comestível imediatamente
     // e remove o estado remoto. A carcaça NPC executa a animação de morte
     // por conta própria (NPCDinosaurs NPCInstance → playAnimation('Death', false)).
-    if (msg.isDead && !wasDead && !this._carcassSpawned.has(msg.peerId)) {
+    // Usa NPCManager.getNPC para verificar existência real (mais robusto que
+    // _carcassSpawned, que é limpo na desconexão).
+    if (msg.isDead && !wasDead && !NPCManager.getNPC(carcassId)) {
       this._carcassSpawned.add(msg.peerId);
       const info = this._peerInfo.get(msg.peerId);
       NPCManager.spawnPlayerCarcass(
         msg.peerId,
         msg.posX,
         msg.posZ,
-        info?.dinoId ?? 't-rex',
-        msg.level || 1
+        msg.dinoId ?? info?.dinoId ?? 't-rex',
+        msg.level || 1,
+        info?.colors
       );
-      const carcassId = `npc_${msg.peerId}_carcass`;
       useAppStore.getState().damageEdible(carcassId, 0);
       this._remotePlayerStates.delete(msg.peerId);
+      this._bumpRemoteStateVersion();
     }
+  }
+
+  private _bumpRemoteStateVersion(): void {
+    useAppStore.getState().setRemotePlayerStateVersion(Date.now());
   }
 
   private _handleHeartbeat(peerId: string, msg: HeartbeatMessage): void {
@@ -936,6 +1005,7 @@ class PeerMeshClass {
     this._peerInfo.delete(peerId);
     this._lastPeerHeartbeat.delete(peerId);
     this._remotePlayerStates.delete(peerId);
+    this._carcassSpawned.delete(peerId);
 
     if (this._isPackLeader) {
       this._removePackMember(peerId);
@@ -1007,6 +1077,16 @@ class PeerMeshClass {
       for (const [pid, last] of this._lastPeerHeartbeat) {
         if (now - last > PEER_TIMEOUT_MS) {
           this._onPeerDisconnected(pid);
+        }
+      }
+
+      // Auto-reconexão: non-host sem conexão com o host tenta reconectar
+      if (!this._isFirstPeer && this._mode === 'global' && this._ownPeer) {
+        const hostPeerId = GLOBAL_ROOM_CODE;
+        if (!this._connections.has(hostPeerId) && !this._reconnectingTo.has(hostPeerId)) {
+          this._connectToHostPeer(hostPeerId).catch(() => {
+            /* falha silenciosa — retentativa no próximo heartbeat */
+          });
         }
       }
     }, HEARTBEAT_INTERVAL_MS);

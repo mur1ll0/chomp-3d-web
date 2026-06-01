@@ -147,6 +147,7 @@ export interface PlayerStateMessage {
   animationIntent: string;
   level: number;
   scale: number;
+  dinoId?: string;
   /** Fallback PvP damage: when the sending player damages another peer,
    *  this field carries the damage value so the target can apply it
    *  even if the EventBus event is dropped. */

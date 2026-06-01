@@ -42,6 +42,7 @@ class NPCManagerClass implements INPCManager {
   private strategyCache = new Map<Diet, IBehaviorStrategy>();
   private npcRandomCache = new Map<string, IRandomProvider>();
   private pendingDamageToPlayer = 0;
+  private carcassColors = new Map<string, Record<string, string>>();
   private pendingRemoteDamage = new Map<string, number>();
   private isAuthority = true;
   private deterministicMode = false;
@@ -128,8 +129,9 @@ class NPCManagerClass implements INPCManager {
       }
       case 'food_consumed': {
         const foodId = event.data.foodId as string;
+        const damage = (event.data.damage as number) ?? 1;
         if (this.gameStateGateway) {
-          this.gameStateGateway.damageEdible(foodId, 1);
+          this.gameStateGateway.damageEdible(foodId, damage);
         }
         break;
       }
@@ -167,6 +169,7 @@ class NPCManagerClass implements INPCManager {
 
   reset(): void {
     this.npcs.clear();
+    this.carcassColors.clear();
     this.invalidateNpcCache();
     this.spawnedChunks.clear();
     this.strategyCache.clear();
@@ -182,7 +185,7 @@ class NPCManagerClass implements INPCManager {
     this.deterministicMode = false;
   }
 
-  spawnPlayerCarcass(peerId: string, posX: number, posZ: number, dinoId: string, level: number): void {
+  spawnPlayerCarcass(peerId: string, posX: number, posZ: number, dinoId: string, level: number, colors?: Record<string, string>): void {
     const carcassId = `npc_${peerId}_carcass`;
     const stats = dinoStatsMap[dinoId];
     if (!stats) return;
@@ -190,9 +193,27 @@ class NPCManagerClass implements INPCManager {
     const fakeDeadNPC = createNPC(carcassId, stats, level, posX, posZ, 'carcass_chunk');
     fakeDeadNPC.health = 0;
     fakeDeadNPC.state = NPCState.Dead;
-    
+    fakeDeadNPC.animationIntent = 'Death';
+
     this.npcs.set(carcassId, fakeDeadNPC);
+    if (colors) {
+      this.carcassColors.set(carcassId, { ...colors });
+    }
     this.invalidateNpcCache();
+  }
+
+  private _isPlayerCarcassId(id: string): boolean {
+    return id.startsWith('npc_') && id.endsWith('_carcass');
+  }
+
+  removeCarcass(carcassId: string): void {
+    this.npcs.delete(carcassId);
+    this.carcassColors.delete(carcassId);
+    this.invalidateNpcCache();
+  }
+
+  getCarcassColor(npcId: string): Record<string, string> | undefined {
+    return this.carcassColors.get(npcId);
   }
 
   private getStrategyForNPC(npc: NPCData): IBehaviorStrategy {
@@ -406,9 +427,12 @@ class NPCManagerClass implements INPCManager {
       }
     }
 
-    // Remove NPCs that disappeared from the snapshot
+    // Remove NPCs that disappeared from the snapshot, but preserve player
+    // carcasses — they're managed independently via EventBus (food_consumed,
+    // peer death/revive), NOT by snapshot sync. Otherwise a reconnecting host
+    // with a fresh NPCManager would cause all old carcasses to be pruned.
     for (const [id] of this.npcs) {
-      if (!incomingIds.has(id)) {
+      if (!incomingIds.has(id) && !this._isPlayerCarcassId(id)) {
         this.npcs.delete(id);
         changed = true;
       }

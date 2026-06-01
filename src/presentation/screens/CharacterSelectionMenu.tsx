@@ -6,6 +6,7 @@ import { ArrowLeft, Play, Loader2, Shuffle } from 'lucide-react';
 import { PeerMesh } from '../../infrastructure/network/PeerMesh';
 import { peerSession } from '../../infrastructure/network/PeerSession';
 import { EventReplicator } from '../../infrastructure/network/EventReplicator';
+import { PlayerPositionRef } from '../../useCases/game/PlayerPositionRef';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Center, Environment, useGLTF, Bounds } from '@react-three/drei';
 import * as THREE from 'three';
@@ -216,9 +217,11 @@ export const CharacterSelectionMenu: React.FC = () => {
         const code = peerSession.getSessionCode();
         setSessionCode(code);
         PeerMesh.setPlayerInfo(playerName, selectedDinoId, useAppStore.getState().dinoColors);
-        // Host: startParty() sem código (cria peer com o código da sessão)
-        // Client: startParty(código) (conecta ao peer do host)
-        await PeerMesh.startParty(sessionCode ? code : undefined);
+        // Ambos (host e client) usam o MESMO código da sessão.
+        // Host: cria peer com este código como ID.
+        // Client: cria peer aleatório e conecta ao peer do host.
+        const isHost = !sessionCode;
+        await PeerMesh.startParty(code, isHost);
       } catch {
         alert(t('char.alert.partyError'));
         return;
@@ -233,7 +236,7 @@ export const CharacterSelectionMenu: React.FC = () => {
         }
         setPackCode(code);
         PeerMesh.setPackCode(code);
-        
+
         PeerMesh.setPlayerInfo(playerName, selectedDinoId, useAppStore.getState().dinoColors);
         await PeerMesh.startGlobal();
       } catch {
@@ -274,6 +277,7 @@ export const CharacterSelectionMenu: React.FC = () => {
       }
     }
 
+    PlayerPositionRef.isDead = false;
     setScreen('game');
   };
 

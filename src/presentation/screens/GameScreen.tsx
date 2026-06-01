@@ -59,7 +59,17 @@ const DeathScreen: React.FC<{ onLeave: () => Promise<void> | void }> = ({ onLeav
       <button
         onClick={async (e) => {
           e.stopPropagation();
-          if (isOnline) await onLeave();
+          if (isOnline) {
+            // Destrói PeerMesh — nova partida criará conexão fresca com novo peerId.
+            // A carcaça permanece no NPCManager dos peers remotos (Player2, etc.)
+            if (gameMode === 'global') {
+              await PeerMesh.destroy();
+            } else {
+              await onLeave();
+            }
+          } else {
+            await onLeave();
+          }
           resetGameStats();
           setScreen(isOnline ? 'character-select' : 'menu');
         }}
@@ -190,6 +200,7 @@ export const GameScreen: React.FC = () => {
     if (gameMode === 'party') {
       PeerMesh.broadcastDisconnect();
       peerSession.destroy();
+      PeerMesh.destroy();
     } else if (gameMode === 'global') {
       await PeerMesh.destroy();
     }

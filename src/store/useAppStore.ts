@@ -141,6 +141,7 @@ interface AppState {
   networkNPCs: unknown[];
   networkPlayers: unknown[];
   networkTick: number;
+  remotePlayerStateVersion: number;
 
   // Actions
   setLanguage: (lang: Language) => void;
@@ -158,6 +159,7 @@ interface AppState {
   setPlayerChunkPos: (x: number, z: number) => void;
   consumeFood: (points: number) => void;
   damageEdible: (id: string, damage: number) => void;
+  removeEdible: (id: string) => void;
   regrowEdibles: (secondsPassed: number) => void;
   setInteractableEdibleId: (id: string | null) => void;
   
@@ -177,6 +179,7 @@ interface AppState {
   setConnectionStatus: (status: ConnectionStatus) => void;
   setOnlineRole: (role: OnlineRole) => void;
   setConnectedPlayers: (players: string[]) => void;
+  setRemotePlayerStateVersion: (v: number) => void;
   setNetworkData: (npcs: unknown[], players: unknown[], tick: number, edibleStates?: Record<string, number>) => void;
 
   setPackCode: (code: string) => void;
@@ -235,6 +238,7 @@ export const useAppStore = create<AppState>((set) => ({
   networkNPCs: [],
   networkPlayers: [],
   networkTick: 0,
+  remotePlayerStateVersion: 0,
 
   setLanguage: (lang) => set(() => { persistLanguage(lang); return { language: lang }; }),
   setScreen: (screen) => set({ currentScreen: screen }),
@@ -325,6 +329,11 @@ export const useAppStore = create<AppState>((set) => ({
       respawnTimers: newRespawnTimers,
       edibleGrowthLocks: newGrowthLocks,
     };
+  }),
+  removeEdible: (id) => set((state) => {
+    const newStates = { ...state.edibleStates };
+    delete newStates[id];
+    return { edibleStates: newStates };
   }),
   regrowEdibles: (seconds) => set((state) => {
     const newStates = { ...state.edibleStates };
@@ -455,7 +464,7 @@ export const useAppStore = create<AppState>((set) => ({
   incrementTimeAlive: () => set((state) => ({ timeAlive: state.timeAlive + 1 })),
   resetGameStats: () => set({
     level: 1, xp: 0, xpNeeded: 100, isDead: false, isExhausted: false, timeAlive: 0, foodEaten: 0, foodScore: 0, health: 100, maxHealth: 100, stamina: 100, maxStamina: 100,
-    edibleStates: {}, edibleGrowthLocks: {}, interactableEdibleId: null
+    edibleStates: {}, edibleGrowthLocks: {}, interactableEdibleId: null,
   }),
   setLevel: (level) => set({ level: Math.max(1, level) }),
   setDebugZoomUnlocked: (v) => set({ debugZoomUnlocked: v }),
@@ -464,6 +473,7 @@ export const useAppStore = create<AppState>((set) => ({
   setConnectionStatus: (status) => set({ connectionStatus: status }),
   setOnlineRole: (role) => set({ onlineRole: role }),
   setConnectedPlayers: (players) => set({ connectedPlayers: players }),
+  setRemotePlayerStateVersion: (v) => set({ remotePlayerStateVersion: v }),
   setPackRole: (role) => set({ packRole: role }),
   setPackMembers: (members) => set({ packMembers: members }),
   setPackLeaderPeerId: (peerId) => set({ packLeaderPeerId: peerId }),

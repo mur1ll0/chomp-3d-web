@@ -241,6 +241,19 @@ export const PlayerDinosaur: React.FC = () => {
     useAppStore.getState().damageEdible(interactableId, percentageDamage);
     useAppStore.getState().consumeFood(percentageDamage * initialSize * 12);
 
+    // Replica o consumo para os peers remotos via EventBus
+    if (useAppStore.getState().gameMode === 'global' || useAppStore.getState().gameMode === 'party') {
+      EventBus.push({
+        type: 'food_consumed',
+        tick: NPCManager.getSimulationTick(),
+        originPeerId: PeerMesh.getOwnPeerId(),
+        data: {
+          foodId: interactableId,
+          damage: percentageDamage,
+        },
+      });
+    }
+
     setTimeout(() => {
       isActionLocked.current = false;
       setIsActing(false);
@@ -467,8 +480,20 @@ export const PlayerDinosaur: React.FC = () => {
             animationIntent: 'Death',
             level: PlayerPositionRef.level,
             scale: PlayerPositionRef.scale,
+            dinoId: selectedDinoId,
           }, true); // force=true para ignorar throttle de 100ms
         }
+        // Spawna carcaça localmente (visível para si e para outros mesmo sem rede)
+        NPCManager.spawnPlayerCarcass(
+          PeerMesh.getOwnPeerId(),
+          PlayerPositionRef.x,
+          PlayerPositionRef.z,
+          selectedDinoId,
+          level,
+          useAppStore.getState().dinoColors
+        );
+        const ownCarcassId = `npc_${PeerMesh.getOwnPeerId()}_carcass`;
+        useAppStore.getState().damageEdible(ownCarcassId, 0);
       }
       if (!isGrounded.current) {
         const gravityForce = 100;
@@ -864,7 +889,7 @@ export const PlayerDinosaur: React.FC = () => {
   return (
     <>
       {!isDead && <PointerLockControls enabled={!isActing} />}
-      <group ref={playerRef} position={initialPosition}>
+      <group ref={playerRef} position={initialPosition} visible={!isDead}>
         <group scale={[finalScale, finalScale, finalScale]}>
           <primitive object={playerModel} />
         </group>

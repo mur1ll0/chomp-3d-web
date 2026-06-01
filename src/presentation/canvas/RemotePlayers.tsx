@@ -23,18 +23,26 @@ function findClip(animations: THREE.AnimationClip[], intent: string): THREE.Anim
   return animations[0] ?? null;
 }
 
+const HIT_FLASH_DURATION = 0.3;
+
 const RemotePlayerInstance: React.FC<{ peerId: string; name: string; dinoId: string; colors: Record<string, string> }> = ({ peerId, name, dinoId, colors }) => {
   const stats = useMemo(() => DINOSAUR_ROSTER.find(d => d.id === dinoId) ?? DINOSAUR_ROSTER[0], [dinoId]);
   const gltf = useGLTF(stats.modelPath);
   const groupRef = useRef<THREE.Group>(null);
   const prevAnimIntent = useRef('');
+  const prevHealthRef = useRef<number | null>(null);
+  const flashingUntilRef = useRef(0);
+  const materialsRef = useRef<THREE.MeshStandardMaterial[]>([]);
   const [remoteLevel, setRemoteLevel] = useState(1);
 
-  const { clonedScene, mixer } = useMemo(() => {
+  const colorsKey = useMemo(() => JSON.stringify(colors), [colors]);
+
+  const { clonedScene, mixer, materials } = useMemo(() => {
     const clone = cloneSkinnedMesh(gltf.scene);
     clone.position.set(0, 0, 0);
     clone.rotation.set(0, 0, 0);
     clone.scale.set(1, 1, 1);
+    const mats: THREE.MeshStandardMaterial[] = [];
     clone.traverse((child) => {
       if ((child as THREE.SkinnedMesh).isSkinnedMesh) {
         (child as THREE.SkinnedMesh).frustumCulled = false;
@@ -43,7 +51,9 @@ const RemotePlayerInstance: React.FC<{ peerId: string; name: string; dinoId: str
         const mesh = child as THREE.Mesh;
         if (mesh.material && !Array.isArray(mesh.material)) {
           const mat = (mesh.material as THREE.MeshStandardMaterial).clone();
+          mat.userData.originalColor = mat.color.getHex();
           mesh.material = mat;
+          mats.push(mat);
         }
       }
     });
@@ -56,6 +66,7 @@ const RemotePlayerInstance: React.FC<{ peerId: string; name: string; dinoId: str
             const mat = mesh.material as THREE.MeshStandardMaterial;
             if (mat.name && colors[mat.name]) {
               mat.color.set(colors[mat.name]);
+              mat.userData.originalColor = mat.color.getHex();
             }
           }
         }
@@ -69,9 +80,14 @@ const RemotePlayerInstance: React.FC<{ peerId: string; name: string; dinoId: str
       action.play();
     }
 
-    return { clonedScene: clone, mixer: m };
+    return { clonedScene: clone, mixer: m, materials: mats };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gltf.scene, gltf.animations, dinoId, JSON.stringify(colors)]);
+  }, [gltf.scene, gltf.animations, dinoId, colorsKey]);
+
+  useEffect(() => {
+    materialsRef.current = materials;
+    return () => { materialsRef.current = []; };
+  }, [materials]);
 
   useEffect(() => {
     return () => {
@@ -87,10 +103,34 @@ const RemotePlayerInstance: React.FC<{ peerId: string; name: string; dinoId: str
 
     const latestStates = PeerMesh.getRemotePlayerStates();
     const s = latestStates.get(peerId);
-    if (!s) return;
+    if (!s) {
+      groupRef.current.visible = false;
+      return;
+    }
+    groupRef.current.visible = true;
 
     if (s.level && s.level !== remoteLevel) {
       setRemoteLevel(s.level);
+    }
+
+    // Hit flash detection: se health diminuiu, pisca vermelho
+    const currentHealth = s.health;
+    if (prevHealthRef.current !== null && currentHealth < prevHealthRef.current) {
+      flashingUntilRef.current = performance.now() + HIT_FLASH_DURATION * 1000;
+    }
+    prevHealthRef.current = currentHealth;
+
+    const now = performance.now();
+    const isFlashing = now < flashingUntilRef.current;
+    for (const mat of materialsRef.current) {
+      if (isFlashing) {
+        mat.color.set('red');
+      } else {
+        const orig = mat.userData.originalColor as number | undefined;
+        if (orig !== undefined) {
+          mat.color.setHex(orig);
+        }
+      }
     }
 
     // Sempre interpola posição/rotação (mesmo invisível, para reentrada suave)
@@ -168,7 +208,9 @@ const RemotePlayerInstance: React.FC<{ peerId: string; name: string; dinoId: str
 export const RemotePlayers: React.FC = () => {
   const gameMode = useAppStore(s => s.gameMode);
   const connectedPlayers = useAppStore(s => s.connectedPlayers);
+  const remoteStateVersion = useAppStore(s => s.remotePlayerStateVersion);
   void connectedPlayers;
+  void remoteStateVersion;
 
   if (gameMode === 'single' || gameMode === null) return null;
 

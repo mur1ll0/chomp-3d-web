@@ -127,8 +127,14 @@ const NPCInstance: React.FC<{
     if (colorState !== lastColorState.current) {
       lastColorState.current = colorState;
       cachedMaterials.forEach(m => {
-        if (colorState === 'dead') m.color.set('#440000');
-        else if (colorState === 'hit') m.color.set('#ff0000');
+        if (colorState === 'dead') {
+          const carcassColors = NPCManager.getCarcassColor(data.id);
+          if (carcassColors && m.name && carcassColors[m.name]) {
+            m.color.set(carcassColors[m.name]);
+          } else {
+            m.color.set('#666666');
+          }
+        } else if (colorState === 'hit') m.color.set('#ff0000');
         else m.color.copy(m.userData.originalColor);
       });
     }
@@ -234,24 +240,31 @@ export const NPCDinosaurs: React.FC = () => {
     []
   );
 
+  // Mount/unmount: reset NPCManager (não preserva carcaças de sessões anteriores)
   useLayoutEffect(() => {
     NPCManager.configureGateways(gameStateGateway, worldQueryGateway);
     NPCManager.configureWorldSeed(WORLD_SEED);
-
-    if (isClientMode) {
-      interpolatorRef.current = new NpcSnapshotInterpolator();
-      NPCManager.setAuthority(false);
-      NPCManager.reset();
-    } else {
-      NPCManager.setAuthority(true);
-      NPCManager.reset();
-    }
+    NPCManager.reset();
 
     return () => {
       NPCManager.reset();
+    };
+  }, [gameStateGateway, worldQueryGateway]);
+
+  // Transição client↔host: só troca autoridade, NÃO reseta NPCManager
+  // (preserva carcaças e NPCs durante mid-game host transfer)
+  useLayoutEffect(() => {
+    if (isClientMode) {
+      interpolatorRef.current = new NpcSnapshotInterpolator();
+      NPCManager.setAuthority(false);
+    } else {
+      NPCManager.setAuthority(true);
+    }
+
+    return () => {
       interpolatorRef.current = null;
     };
-  }, [gameStateGateway, worldQueryGateway, isClientMode]);
+  }, [isClientMode]);
 
   // Client: quando networkNPCs muda no store, alimenta o interpolador
   React.useEffect(() => {
