@@ -50,7 +50,7 @@ export const NetworkPanel: React.FC = () => {
   };
 
   return (
-    <div className="absolute bottom-4 right-4 z-30" onPointerDown={stop} onMouseDown={stop} onClick={stop}>
+    <div className="absolute bottom-4 right-4 z-50" onPointerDown={stop} onMouseDown={stop} onClick={stop}>
       {/* Toggle button */}
       <button
         onClick={(e) => { stopAndRelease(e); setExpanded(!expanded); }}
@@ -70,7 +70,7 @@ export const NetworkPanel: React.FC = () => {
       </button>
 
       {expanded && (
-        <div className="absolute bottom-12 right-0 bg-slate-900/95 backdrop-blur border border-slate-700 rounded-xl p-4 w-72 shadow-2xl flex flex-col gap-3 pointer-events-auto">
+        <div className="absolute bottom-12 right-0 bg-slate-900/95 backdrop-blur border border-slate-700 rounded-xl p-4 w-72 shadow-2xl flex flex-col gap-3 pointer-events-auto overflow-y-auto" style={{ maxHeight: 'calc(100dvh - 80px)' }}>
           {/* Header */}
           <div className="flex items-center justify-between">
             <h3 className="text-white font-bold text-sm flex items-center gap-2">

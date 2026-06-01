@@ -544,6 +544,7 @@ export const PlayerDinosaur: React.FC = () => {
       if (touchInput.attack && !isActionLocked.current && isGrounded.current) {
         touchInput.attack = false;
         triggerAttackAction();
+        return;
       }
       if (touchInput.jump && isGrounded.current && !inWater) {
         touchInput.jump = false;
@@ -555,8 +556,8 @@ export const PlayerDinosaur: React.FC = () => {
 
     // Acionar Comer pelo teclado (apenas se houver comida próxima)
     const wantsEat = isMobile ? touchInput.eat : keys[controlBindings.eat];
+    if (isMobile) touchInput.eat = false;
     if (wantsEat && isGrounded.current && useAppStore.getState().interactableEdibleId) {
-      if (isMobile) touchInput.eat = false;
       triggerEatAction();
       return;
     }
@@ -579,11 +580,7 @@ export const PlayerDinosaur: React.FC = () => {
     // Começa em 0.5 (50%) e sobe 0.5 (até 100%) ao longo de 19 níveis
     const levelSpeedModifier = level < 20 ? (0.5 + ((level - 1) / 19) * 0.5) : 1.0;
 
-    const baseCurrentSpeed = isRunning ? dinoStats.runSpeed : dinoStats.walkSpeed;
     const waterMultiplier = inWater ? 0.5 : 1.0;
-
-    // A velocidade agora é baseada diretamente nos stats, sem interferência da altura/escala
-    const moveSpeed = baseCurrentSpeed * waterMultiplier * levelSpeedModifier;
     const turnSpeed = 10.0;
 
     // Mobile: atualiza rotacao da camera por touch drag
@@ -609,14 +606,14 @@ export const PlayerDinosaur: React.FC = () => {
     let moving = false;
 
     // Bloqueia movimento se estiver executando uma ação (Comer/Atacar)
-    if (isMobile) {
+    if (isMobile && !isActionLocked.current) {
       const mx = touchInput.moveX;
       const mz = touchInput.moveZ;
       if (Math.abs(mx) > 0.1 || Math.abs(mz) > 0.1) {
         _moveDir.addScaledVector(_right, mx);
         _moveDir.addScaledVector(_forward, mz);
         moving = true;
-        isRunning = Math.sqrt(mx * mx + mz * mz) > 0.7 && staminaOk;
+        isRunning = touchInput.sprintToggled && staminaOk;
       }
     } else if (!isActing) {
       if (keys[controlBindings.moveForward]) { _moveDir.add(_forward); moving = true; }
@@ -624,6 +621,9 @@ export const PlayerDinosaur: React.FC = () => {
       if (keys[controlBindings.moveLeft]) { _moveDir.sub(_right); moving = true; }
       if (keys[controlBindings.moveRight]) { _moveDir.add(_right); moving = true; }
     }
+
+    const baseCurrentSpeed = isRunning ? dinoStats.runSpeed : dinoStats.walkSpeed;
+    const moveSpeed = baseCurrentSpeed * waterMultiplier * levelSpeedModifier;
 
     // Lógica de Stamina
     if (moving && isRunning) {

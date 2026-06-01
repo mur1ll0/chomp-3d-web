@@ -129,11 +129,11 @@ const DinosaurConfiguratorUI = ({ modelPath }: { modelPath: string }) => {
 
       {/* Interface overlay de seleção de cores por material */}
       {materials.length > 0 && (
-        <div className="absolute bottom-4 left-0 right-0 flex flex-col items-center gap-4 z-20">
+        <div className="absolute bottom-4 left-0 right-0 flex flex-col items-center gap-4 z-20" onClick={() => setActiveMaterial(null)}>
           
           {/* Color Picker popover */}
           {activeMaterial && (
-            <div className="p-3 bg-slate-900/90 backdrop-blur-md rounded-2xl shadow-2xl border border-slate-700 animate-in fade-in zoom-in duration-200">
+            <div className="p-3 bg-slate-900/90 backdrop-blur-md rounded-2xl shadow-2xl border border-slate-700 animate-in fade-in zoom-in duration-200" onClick={e => e.stopPropagation()}>
               <div className="text-xs font-bold text-slate-400 mb-2 text-center">
                 {t('char.part', { n: materials.indexOf(activeMaterial) + 1 })}
               </div>
@@ -145,7 +145,7 @@ const DinosaurConfiguratorUI = ({ modelPath }: { modelPath: string }) => {
           )}
 
           {/* Bolinhas de materiais */}
-          <div className="flex gap-3 bg-slate-900/80 p-2 rounded-full backdrop-blur-md border border-slate-700/50 shadow-xl">
+          <div className="flex gap-3 bg-slate-900/80 p-2 rounded-full backdrop-blur-md border border-slate-700/50 shadow-xl" onClick={e => e.stopPropagation()}>
             {materials.map((matName, index) => (
               <button 
                 key={matName}
@@ -287,8 +287,8 @@ export const CharacterSelectionMenu: React.FC = () => {
   };
 
   return (
-    <div className="flex items-start sm:items-center justify-center min-h-screen bg-slate-900 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-800 to-slate-950 text-slate-200 p-4 overflow-y-auto">
-      <div className="max-w-6xl w-full p-4 sm:p-6 md:p-8 bg-slate-800/80 backdrop-blur-md rounded-2xl shadow-2xl border border-slate-700/50 flex flex-col md:flex-row gap-4 sm:gap-6 md:gap-8 max-h-[90vh] overflow-y-auto">
+    <div className="min-h-screen flex items-start sm:items-center justify-center bg-slate-900 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-800 to-slate-950 text-slate-200 p-2 sm:p-4">
+      <div className="w-full max-w-6xl p-3 sm:p-6 md:p-8 bg-slate-800/80 backdrop-blur-md rounded-2xl shadow-2xl border border-slate-700/50 flex flex-col lg:flex-row gap-3 sm:gap-6 md:gap-8">
         
         {/* Left Column: Selection */}
         <div className="flex-1 flex flex-col gap-3 sm:gap-4 md:gap-6">
@@ -370,7 +370,7 @@ export const CharacterSelectionMenu: React.FC = () => {
             </button>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 overflow-y-auto max-h-[300px] custom-scrollbar pr-2">
+          <div className="grid grid-cols-2 gap-2 sm:gap-3 overflow-y-auto max-h-[200px] sm:max-h-[250px] md:max-h-[300px] custom-scrollbar pr-1 sm:pr-2">
             {filteredDinos.map(dino => (
               <button
                 key={dino.id}
@@ -388,7 +388,7 @@ export const CharacterSelectionMenu: React.FC = () => {
         </div>
 
         {/* Middle Column: 3D Preview */}
-        <div className="hidden lg:flex w-[300px] xl:w-[400px] flex-col rounded-xl overflow-hidden relative border border-slate-700/50 bg-slate-900/50 justify-center">
+        <div className="w-full lg:w-[300px] xl:w-[400px] h-[220px] lg:h-auto flex flex-col rounded-xl overflow-hidden relative border border-slate-700/50 bg-slate-900/50 justify-center">
           <div className="absolute top-4 left-4 z-10 bg-slate-800/80 backdrop-blur px-3 py-1 rounded-full text-xs font-bold text-slate-300 border border-slate-700">
             {t('char.preview')}
           </div>
@@ -460,7 +460,6 @@ export const CharacterSelectionMenu: React.FC = () => {
             </button>
           </div>
         </div>
-
       </div>
     </div>
   );

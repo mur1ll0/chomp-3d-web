@@ -6,6 +6,7 @@ export interface TouchInputData {
   eat: boolean;
   cameraYaw: number;
   cameraPitch: number;
+  sprintToggled: boolean;
 }
 
 export const touchInput: TouchInputData = {
@@ -16,6 +17,7 @@ export const touchInput: TouchInputData = {
   eat: false,
   cameraYaw: 0,
   cameraPitch: 0,
+  sprintToggled: false,
 };
 
 export function isMobileDevice(): boolean {

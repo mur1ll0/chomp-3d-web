@@ -217,7 +217,7 @@ export const GameScreen: React.FC = () => {
   }, [renderDistance, playerChunkPos.x, playerChunkPos.z]);
 
   return (
-    <div className="w-full h-screen relative">
+    <div className="w-full game-fullscreen relative overflow-hidden">
       <DebugPanel />
       {isSettingsOpenInGame && (
         <div

@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useAppStore } from '../../store/useAppStore';
+import { isMobileDevice } from '../../useCases/game/TouchInputState';
 
 type DinoDebugInfo = {
   speed: number;
@@ -18,6 +19,8 @@ type WindowWithDinoDebug = Window & {
 };
 
 export const DebugPanel: React.FC = () => {
+  const [collapsed, setCollapsed] = useState(isMobileDevice());
+
   const { 
     level, setLevel, 
     debugZoomUnlocked, setDebugZoomUnlocked,
@@ -82,6 +85,35 @@ export const DebugPanel: React.FC = () => {
 
   if (!import.meta.env.DEV || isDead) return null;
 
+  const toggleStyle: React.CSSProperties = {
+    position: 'absolute',
+    top: '85px',
+    left: '16px',
+    zIndex: 1000,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    color: '#00ff00',
+    border: '1px solid #444',
+    borderRadius: '4px',
+    padding: '4px 8px',
+    fontFamily: 'monospace',
+    fontSize: '11px',
+    cursor: 'pointer',
+    pointerEvents: 'auto',
+  };
+
+  if (collapsed) {
+    return (
+      <button
+        style={toggleStyle}
+        onClick={() => setCollapsed(false)}
+        onMouseDown={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
+      >
+        DBG
+      </button>
+    );
+  }
+
   return (
     <div 
       onMouseDown={(e) => e.stopPropagation()}
@@ -103,9 +135,18 @@ export const DebugPanel: React.FC = () => {
       minWidth: '200px',
       boxShadow: '0 4px 15px rgba(0,0,0,0.5)'
     }}>
-      <h3 style={{ margin: '0 0 10px 0', borderBottom: '1px solid #444', paddingBottom: '5px', color: '#fff' }}>
-        DEV DEBUG PANEL
-      </h3>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', borderBottom: '1px solid #444', paddingBottom: '5px' }}>
+        <h3 style={{ margin: 0, color: '#fff' }}>
+          DEV DEBUG PANEL
+        </h3>
+        <button
+          onClick={() => setCollapsed(true)}
+          style={{ ...buttonStyle, padding: '2px 8px', fontSize: '10px' }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          Hide
+        </button>
+      </div>
       
       <div style={{ marginBottom: '10px' }}>
         <div>FPS: <span style={{ color: fps < 30 ? '#ff4444' : '#fff' }}>{fps}</span></div>

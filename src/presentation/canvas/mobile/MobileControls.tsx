@@ -83,7 +83,7 @@ export const MobileControls: React.FC = () => {
       <div
         style={{
           position: 'fixed',
-          bottom: 28,
+          bottom: 90,
           right: 14,
           display: 'flex',
           gap: GAP,

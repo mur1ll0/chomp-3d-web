@@ -1,15 +1,18 @@
-import React, { useRef, useCallback } from 'react';
+import React, { useRef, useCallback, useState } from 'react';
 import { touchInput } from '../../../useCases/game/TouchInputState';
 
 const BASE_SIZE = 140;
 const KNOB_SIZE = 50;
 const DEAD_ZONE = 0.15;
+const TAP_THRESHOLD = 12;
 
 export const VirtualJoystick: React.FC = () => {
   const baseRef = useRef<HTMLDivElement>(null);
   const knobRef = useRef<HTMLDivElement>(null);
   const touchIdRef = useRef<number | null>(null);
   const baseRectRef = useRef<DOMRect | null>(null);
+  const startPosRef = useRef<{ x: number; y: number } | null>(null);
+  const [sprintOn, setSprintOn] = useState(touchInput.sprintToggled);
 
   const updateKnob = useCallback((x: number, y: number) => {
     const knob = knobRef.current;
@@ -28,6 +31,7 @@ export const VirtualJoystick: React.FC = () => {
     if (touchIdRef.current !== null) return;
     const touch = e.changedTouches[0];
     touchIdRef.current = touch.identifier;
+    startPosRef.current = { x: touch.clientX, y: touch.clientY };
 
     const base = baseRef.current;
     if (!base) return;
@@ -101,6 +105,18 @@ export const VirtualJoystick: React.FC = () => {
     if (touchIdRef.current === null) return;
     const touch = Array.from(e.changedTouches).find(t => t.identifier === touchIdRef.current);
     if (!touch) return;
+
+    // Detect tap (start and end close together) to toggle sprint
+    if (startPosRef.current) {
+      const dx = touch.clientX - startPosRef.current.x;
+      const dy = touch.clientY - startPosRef.current.y;
+      if (Math.sqrt(dx * dx + dy * dy) < TAP_THRESHOLD) {
+        const next = !touchInput.sprintToggled;
+        touchInput.sprintToggled = next;
+        setSprintOn(next);
+      }
+    }
+    startPosRef.current = null;
     resetKnob();
   }, [resetKnob]);
 
@@ -140,12 +156,31 @@ export const VirtualJoystick: React.FC = () => {
           width: KNOB_SIZE,
           height: KNOB_SIZE,
           borderRadius: '50%',
-          background: 'rgba(255,255,255,0.6)',
+          background: sprintOn ? 'rgba(251,146,60,0.8)' : 'rgba(255,255,255,0.6)',
           pointerEvents: 'none',
           marginTop: -(KNOB_SIZE / 2),
           marginLeft: -(KNOB_SIZE / 2),
+          transition: 'background 0.15s',
         }}
       />
+      {sprintOn && (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: -18,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            color: '#fb923c',
+            fontSize: 9,
+            fontWeight: 700,
+            letterSpacing: '1px',
+            whiteSpace: 'nowrap',
+            pointerEvents: 'none',
+          }}
+        >
+          RUN
+        </div>
+      )}
     </div>
   );
 };

@@ -7,7 +7,7 @@
   --color-surface: #1e293b; /* slate-800 */
 }
 
-html, body, #root {
+html, body {
   width: 100%;
   height: 100%;
   margin: 0;
@@ -16,6 +16,30 @@ html, body, #root {
   background-color: var(--color-background);
   color: white;
   font-family: 'Inter', system-ui, Avenir, Helvetica, Arial, sans-serif;
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: none;
+  -webkit-overflow-scrolling: touch;
+  background-color: var(--color-background);
+  color: white;
+  font-family: 'Inter', system-ui, Avenir, Helvetica, Arial, sans-serif;
+}
+
+.game-fullscreen {
+  height: 100vh;
+  height: 100dvh;
+}
+
+/* Touch scrolling for mobile */
+* {
+  -webkit-overflow-scrolling: touch;
 }
 
 /* Mobile controls landscape optimization */
